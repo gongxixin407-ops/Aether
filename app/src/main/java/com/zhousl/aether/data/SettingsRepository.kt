@@ -1,0 +1,223 @@
+package com.zhousl.aether.data
+
+import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+
+private val Context.dataStore by preferencesDataStore(name = "aether_settings")
+
+class SettingsRepository(
+    private val context: Context,
+) {
+    val settings: Flow<AppSettings> = context.dataStore.data.map { preferences ->
+        AppSettings(
+            provider = LlmProvider.fromStorage(preferences[PROVIDER]),
+            apiKey = preferences[API_KEY].orEmpty(),
+            baseUrl = preferences[BASE_URL] ?: AppSettings().baseUrl,
+            modelId = preferences[MODEL_ID] ?: AppSettings().modelId,
+            systemPrompt = preferences[SYSTEM_PROMPT] ?: AppSettings().systemPrompt,
+            tavilyApiKey = preferences[TAVILY_API_KEY].orEmpty(),
+            llmInactivityReconnectTimeoutSeconds = normalizeLlmInactivityReconnectTimeoutSeconds(
+                preferences[LLM_INACTIVITY_RECONNECT_TIMEOUT_SECONDS]
+            ),
+            keepTasksRunningInBackground = preferences[KEEP_TASKS_RUNNING_IN_BACKGROUND] ?: true,
+            notifyOnTaskCompletion = preferences[NOTIFY_ON_TASK_COMPLETION] ?: true,
+            agentModeAuthorizationEnabled = preferences[AGENT_MODE_AUTHORIZATION_ENABLED] ?: false,
+            agentModeAuthorizationMethod = AgentModeAuthorizationMethod.fromStorage(
+                preferences[AGENT_MODE_AUTHORIZATION_METHOD],
+                defaultValue = defaultAgentModeAuthorizationMethod(context),
+            ),
+            onboardingSeenVersion = preferences[ONBOARDING_SEEN_VERSION] ?: 0,
+            onboardingCompletedVersion = preferences[ONBOARDING_COMPLETED_VERSION] ?: 0,
+        )
+    }
+
+    // ── Multi-Provider support ───────────────────────────────────────────────
+    val providerConfigs: Flow<List<LlmProviderConfig>> = context.dataStore.data.map { preferences ->
+        parseProviderConfigs(preferences[PROVIDER_CONFIGS].orEmpty())
+    }
+
+    suspend fun upsertProviderConfig(config: LlmProviderConfig) {
+        context.dataStore.edit { prefs ->
+            val current = parseProviderConfigs(prefs[PROVIDER_CONFIGS].orEmpty()).toMutableList()
+            val existingIndex = current.indexOfFirst { it.id == config.id }
+            val updatedConfig = config.copy(updatedAtMillis = System.currentTimeMillis())
+            if (existingIndex >= 0) {
+                current[existingIndex] = updatedConfig
+            } else {
+                current.add(updatedConfig)
+            }
+            prefs[PROVIDER_CONFIGS] = serializeProviderConfigs(current)
+        }
+    }
+
+    suspend fun removeProviderConfig(id: String) {
+        context.dataStore.edit { prefs ->
+            val current = parseProviderConfigs(prefs[PROVIDER_CONFIGS].orEmpty())
+            val updated = current.filter { it.id != id }
+            prefs[PROVIDER_CONFIGS] = serializeProviderConfigs(updated)
+        }
+    }
+
+    suspend fun setActiveProvider(id: String) {
+        context.dataStore.edit { prefs ->
+            val current = parseProviderConfigs(prefs[PROVIDER_CONFIGS].orEmpty())
+            val updated = current.map { it.copy(isActive = it.id == id) }
+            prefs[PROVIDER_CONFIGS] = serializeProviderConfigs(updated)
+
+            // Also update legacy single-provider settings for compatibility
+            val activeProvider = updated.firstOrNull { it.isActive }
+            if (activeProvider != null) {
+                prefs[PROVIDER] = activeProvider.providerType.storageValue
+                prefs[API_KEY] = activeProvider.apiKey
+                prefs[BASE_URL] = activeProvider.baseUrl
+                prefs[MODEL_ID] = activeProvider.modelId
+            }
+        }
+    }
+
+    suspend fun updateProviderCachedModels(id: String, models: List<String>) {
+        context.dataStore.edit { prefs ->
+            val current = parseProviderConfigs(prefs[PROVIDER_CONFIGS].orEmpty()).toMutableList()
+            val index = current.indexOfFirst { it.id == id }
+            if (index >= 0) {
+                current[index] = current[index].copy(
+                    cachedModels = models,
+                    updatedAtMillis = System.currentTimeMillis(),
+                )
+                prefs[PROVIDER_CONFIGS] = serializeProviderConfigs(current)
+            }
+        }
+    }
+
+    // ── Legacy single-provider methods ───────────────────────────────────────
+
+    suspend fun replaceImportedSettings(
+        settings: AppSettings,
+        providerConfigs: List<LlmProviderConfig>,
+    ) {
+        context.dataStore.edit {
+            it[PROVIDER] = settings.provider.storageValue
+            it[API_KEY] = settings.apiKey
+            it[BASE_URL] = settings.baseUrl
+            it[MODEL_ID] = settings.modelId
+            it[SYSTEM_PROMPT] = settings.systemPrompt
+            it[TAVILY_API_KEY] = settings.tavilyApiKey
+            it[LLM_INACTIVITY_RECONNECT_TIMEOUT_SECONDS] =
+                normalizeLlmInactivityReconnectTimeoutSeconds(
+                    settings.llmInactivityReconnectTimeoutSeconds
+                )
+            it[KEEP_TASKS_RUNNING_IN_BACKGROUND] = settings.keepTasksRunningInBackground
+            it[NOTIFY_ON_TASK_COMPLETION] = settings.notifyOnTaskCompletion
+            it[AGENT_MODE_AUTHORIZATION_ENABLED] = settings.agentModeAuthorizationEnabled
+            it[AGENT_MODE_AUTHORIZATION_METHOD] = settings.agentModeAuthorizationMethod.storageValue
+            it[ONBOARDING_SEEN_VERSION] = settings.onboardingSeenVersion
+            it[ONBOARDING_COMPLETED_VERSION] = settings.onboardingCompletedVersion
+            it[PROVIDER_CONFIGS] = serializeProviderConfigs(providerConfigs)
+        }
+    }
+
+    suspend fun updateApiKey(value: String) {
+        context.dataStore.edit { it[API_KEY] = value }
+    }
+
+    suspend fun updateBaseUrl(value: String) {
+        context.dataStore.edit { it[BASE_URL] = value }
+    }
+
+    suspend fun updateModelId(value: String) {
+        context.dataStore.edit { it[MODEL_ID] = value }
+    }
+
+    suspend fun updateSystemPrompt(value: String) {
+        context.dataStore.edit { it[SYSTEM_PROMPT] = value }
+    }
+
+    suspend fun updateTavilyApiKey(value: String) {
+        context.dataStore.edit { it[TAVILY_API_KEY] = value }
+    }
+
+    suspend fun updateSettings(settings: AppSettings) {
+        context.dataStore.edit {
+            it[PROVIDER] = settings.provider.storageValue
+            it[API_KEY] = settings.apiKey
+            it[BASE_URL] = settings.baseUrl
+            it[MODEL_ID] = settings.modelId
+            it[SYSTEM_PROMPT] = settings.systemPrompt
+            it[TAVILY_API_KEY] = settings.tavilyApiKey
+            it[LLM_INACTIVITY_RECONNECT_TIMEOUT_SECONDS] =
+                normalizeLlmInactivityReconnectTimeoutSeconds(
+                    settings.llmInactivityReconnectTimeoutSeconds
+                )
+            it[KEEP_TASKS_RUNNING_IN_BACKGROUND] = settings.keepTasksRunningInBackground
+            it[NOTIFY_ON_TASK_COMPLETION] = settings.notifyOnTaskCompletion
+            it[AGENT_MODE_AUTHORIZATION_ENABLED] = settings.agentModeAuthorizationEnabled
+            it[AGENT_MODE_AUTHORIZATION_METHOD] = settings.agentModeAuthorizationMethod.storageValue
+        }
+    }
+
+    suspend fun updateOnboardingSeenVersion(version: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[ONBOARDING_SEEN_VERSION] = version
+        }
+    }
+
+    suspend fun updateOnboardingCompletedVersion(version: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[ONBOARDING_COMPLETED_VERSION] = version
+        }
+    }
+
+    private companion object {
+        val PROVIDER = stringPreferencesKey("provider")
+        val API_KEY = stringPreferencesKey("api_key")
+        val BASE_URL = stringPreferencesKey("base_url")
+        val MODEL_ID = stringPreferencesKey("model_id")
+        val SYSTEM_PROMPT = stringPreferencesKey("system_prompt")
+        val TAVILY_API_KEY = stringPreferencesKey("tavily_api_key")
+        val LLM_INACTIVITY_RECONNECT_TIMEOUT_SECONDS =
+            intPreferencesKey("llm_inactivity_reconnect_timeout_seconds")
+        val KEEP_TASKS_RUNNING_IN_BACKGROUND =
+            booleanPreferencesKey("keep_tasks_running_in_background")
+        val NOTIFY_ON_TASK_COMPLETION =
+            booleanPreferencesKey("notify_on_task_completion")
+        val AGENT_MODE_AUTHORIZATION_ENABLED =
+            booleanPreferencesKey("agent_mode_authorization_enabled")
+        val AGENT_MODE_AUTHORIZATION_METHOD =
+            stringPreferencesKey("agent_mode_authorization_method")
+        val PROVIDER_CONFIGS = stringPreferencesKey("provider_configs")
+        val ONBOARDING_SEEN_VERSION = intPreferencesKey("onboarding_seen_version")
+        val ONBOARDING_COMPLETED_VERSION = intPreferencesKey("onboarding_completed_version")
+    }
+}
+
+private val ShizukuManagerPackages = listOf(
+    "moe.shizuku.privileged.api",
+    "moe.shizuku.manager",
+)
+
+private fun defaultAgentModeAuthorizationMethod(
+    context: Context,
+): AgentModeAuthorizationMethod =
+    if (isAnyPackageInstalled(context, ShizukuManagerPackages)) {
+        AgentModeAuthorizationMethod.Shizuku
+    } else {
+        AgentModeAuthorizationMethod.Root
+    }
+
+private fun isAnyPackageInstalled(
+    context: Context,
+    packageNames: List<String>,
+): Boolean {
+    val packageManager = context.packageManager
+    return packageNames.any { packageName ->
+        runCatching {
+            packageManager.getPackageInfo(packageName, 0)
+        }.isSuccess
+    }
+}

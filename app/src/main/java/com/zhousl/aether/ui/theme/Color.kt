@@ -1,0 +1,26 @@
+package com.zhousl.aether.ui.theme
+
+import androidx.compose.ui.graphics.Color
+
+val AetherBackground = Color(0xFFF7F7F3)
+val AetherBackgroundGradientTop = Color(0xFFF3F1EA)
+val AetherSurface = Color(0xFFFFFFFF)
+val AetherSurfaceHigh = Color(0xFFF5F4EF)
+val AetherSurfaceHigher = Color(0xFFEEECE6)
+val AetherSurfaceVariant = Color(0xFFE8E4DB)
+val AetherOutline = Color(0xFFD9D5CC)
+val AetherOutlineSoft = Color(0xFFE7E3DA)
+val AetherOnSurface = Color(0xFF202123)
+val AetherOnSurfaceVariant = Color(0xFF6E6A62)
+val AetherPrimary = Color(0xFF7C5CFA)
+val AetherOnPrimary = Color(0xFFFFFFFF)
+val AetherPrimaryContainer = Color(0xFFF1E5FF)
+val AetherOnPrimaryContainer = Color(0xFF4D2F8E)
+val AetherSecondary = Color(0xFF4A7B6B)
+val AetherOnSecondary = Color(0xFFFFFFFF)
+val AetherSecondaryContainer = Color(0xFFDDF1E8)
+val AetherOnSecondaryContainer = Color(0xFF1E4A3B)
+val AetherTertiary = Color(0xFF9A7DF8)
+val AetherError = Color(0xFFD25757)
+val AetherMessageBubble = Color(0xFFF0E3FF)
+val AetherScrim = Color(0x22000000)

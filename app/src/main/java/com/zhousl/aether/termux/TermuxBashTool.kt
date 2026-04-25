@@ -1,0 +1,1009 @@
+package com.zhousl.aether.termux
+
+import android.app.PendingIntent
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.util.Log
+import androidx.core.content.ContextCompat
+import java.util.Base64
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import org.json.JSONObject
+
+private const val ManagedCommandWatchWindowSeconds = 45
+private const val DefaultManagedLogTailBytes = 12 * 1024
+private const val MaxManagedLogTailBytes = 64 * 1024
+private const val InternalCommandTimeoutMillis = 15_000L
+private const val SessionWorkspaceRoot = "${TermuxContract.HomeDirectory}/.aether/workspaces"
+private const val TermuxLogTag = "AetherTermux"
+private const val EnableTermuxLogging = false
+
+enum class TermuxSetupIssue {
+    Ready,
+    NotInstalled,
+    PermissionMissing,
+    ExternalAppsDisabled,
+    DispatchFailed,
+}
+
+data class TermuxSetupState(
+    val issue: TermuxSetupIssue = TermuxSetupIssue.Ready,
+    val detail: String = "",
+) {
+    val isReady: Boolean
+        get() = issue == TermuxSetupIssue.Ready
+}
+
+class TermuxBashTool(
+    private val context: Context,
+) {
+    suspend fun inspectSetup(): TermuxSetupState = withContext(Dispatchers.IO) {
+        if (!isTermuxInstalled()) {
+            return@withContext TermuxSetupState(
+                issue = TermuxSetupIssue.NotInstalled,
+                detail = "Install Termux before using bash tools.",
+            )
+        }
+
+        if (!hasRunCommandPermission()) {
+            return@withContext TermuxSetupState(
+                issue = TermuxSetupIssue.PermissionMissing,
+                detail = "Grant 'Run commands in Termux environment' to Aether.",
+            )
+        }
+
+        val probeResult = dispatchCommand(
+            command = "printf '__aether_termux_ready__'",
+            workingDirectory = TermuxContract.HomeDirectory,
+            awaitTimeoutMillis = 4000,
+        )
+        val json = runCatching { JSONObject(probeResult) }.getOrNull()
+            ?: return@withContext TermuxSetupState(
+                issue = TermuxSetupIssue.DispatchFailed,
+                detail = "Termux returned an unreadable setup probe result.",
+            )
+
+        when {
+            json.optBoolean("ok") &&
+                json.optString("stdout").contains("__aether_termux_ready__") -> {
+                TermuxSetupState(TermuxSetupIssue.Ready)
+            }
+
+            json.optString("hint").contains("allow-external-apps", ignoreCase = true) ||
+                json.optString("errmsg").contains("allow-external-apps", ignoreCase = true) ||
+                json.optString("errmsg").contains("rejected", ignoreCase = true) -> {
+                TermuxSetupState(
+                    issue = TermuxSetupIssue.ExternalAppsDisabled,
+                    detail = "Enable allow-external-apps in Termux, or add allow-external-apps=true to ~/.termux/termux.properties.",
+                )
+            }
+
+            else -> {
+                TermuxSetupState(
+                    issue = TermuxSetupIssue.DispatchFailed,
+                    detail = json.optString("errmsg").ifBlank {
+                        json.optString("hint").ifBlank { "Termux did not accept the setup probe." }
+                    },
+                )
+            }
+        }
+    }
+
+    suspend fun execute(argumentsJson: String): String = withContext(Dispatchers.IO) {
+        val arguments = runCatching { JSONObject(argumentsJson) }.getOrElse {
+            return@withContext buildInvalidArgumentsResult("Arguments were not valid JSON.")
+        }
+
+        val command = arguments.optString("command").trim()
+        val workingDirectory = normalizeTermuxPath(
+            arguments.optString("working_directory").trim()
+                .ifBlank { arguments.optString("workingDirectory").trim() }
+                .ifBlank { TermuxContract.HomeDirectory }
+        )
+
+        if (command.isBlank()) {
+            return@withContext buildInvalidArgumentsResult("Missing required 'command' argument.")
+        }
+
+        val runId = TermuxManagedRuns.nextRunId()
+        prepareWorkingDirectoryIfNeeded(workingDirectory)?.let { raw ->
+            return@withContext buildManagedToolError(
+                command = command,
+                workingDirectory = workingDirectory,
+                runId = runId,
+                message = raw.optString("errmsg").ifBlank {
+                    "Couldn't prepare the workspace directory before running the bash command."
+                },
+                hint = raw.optString("hint"),
+                stdout = raw.optString("stdout"),
+                stderr = raw.optString("stderr"),
+            )
+        }
+        try {
+            executeManagedScript(
+                script = buildLaunchManagedCommandScript(
+                    runId = runId,
+                    command = command,
+                    workingDirectory = workingDirectory,
+                    tailBytes = DefaultManagedLogTailBytes,
+                ),
+                commandFallback = command,
+                workingDirectoryFallback = workingDirectory,
+                runIdFallback = runId,
+            )
+        } catch (cancellationException: CancellationException) {
+            runCatching { killExecutionByRunId(runId) }
+            throw cancellationException
+        }
+    }
+
+    suspend fun fetchExecution(argumentsJson: String): String = withContext(Dispatchers.IO) {
+        val arguments = runCatching { JSONObject(argumentsJson) }.getOrElse {
+            return@withContext buildInvalidArgumentsResult("Arguments were not valid JSON.")
+        }
+        val runId = arguments.optString("run_id").trim()
+            .ifBlank { arguments.optString("runId").trim() }
+        val tailBytes = resolveTailBytes(arguments)
+
+        if (!isValidRunId(runId)) {
+            return@withContext buildInvalidArgumentsResult("Missing or invalid 'run_id' argument.")
+        }
+
+        executeManagedScript(
+            script = buildInspectManagedCommandScript(
+                runId = runId,
+                tailBytes = tailBytes,
+            ),
+            runIdFallback = runId,
+        )
+    }
+
+    suspend fun killExecution(argumentsJson: String): String = withContext(Dispatchers.IO) {
+        val arguments = runCatching { JSONObject(argumentsJson) }.getOrElse {
+            return@withContext buildInvalidArgumentsResult("Arguments were not valid JSON.")
+        }
+        val runId = arguments.optString("run_id").trim()
+            .ifBlank { arguments.optString("runId").trim() }
+        val tailBytes = resolveTailBytes(arguments)
+
+        if (!isValidRunId(runId)) {
+            return@withContext buildInvalidArgumentsResult("Missing or invalid 'run_id' argument.")
+        }
+
+        executeManagedScript(
+            script = buildKillManagedCommandScript(
+                runId = runId,
+                tailBytes = tailBytes,
+            ),
+            runIdFallback = runId,
+        )
+    }
+
+    suspend fun killExecutionByRunId(
+        runId: String,
+        tailBytes: Int = DefaultManagedLogTailBytes,
+    ): String = withContext(Dispatchers.IO) {
+        if (!isValidRunId(runId)) {
+            return@withContext buildInvalidArgumentsResult("Missing or invalid run id.")
+        }
+
+        executeManagedScript(
+            script = buildKillManagedCommandScript(
+                runId = runId,
+                tailBytes = tailBytes.coerceIn(1, MaxManagedLogTailBytes),
+            ),
+            runIdFallback = runId,
+        )
+    }
+
+    suspend fun executeCommand(
+        command: String,
+        workingDirectory: String = TermuxContract.HomeDirectory,
+    ): String = withContext(Dispatchers.IO) {
+        val normalizedWorkingDirectory = normalizeTermuxPath(workingDirectory)
+        prepareWorkingDirectoryIfNeeded(normalizedWorkingDirectory)?.let { raw ->
+            return@withContext buildSetupErrorResult(
+                command = command,
+                workingDirectory = normalizedWorkingDirectory,
+                message = raw.optString("errmsg").ifBlank {
+                    "Couldn't prepare the workspace directory before running the command."
+                },
+                hint = raw.optString("hint"),
+            )
+        }
+        dispatchCommand(
+            command = command,
+            workingDirectory = normalizedWorkingDirectory,
+            awaitTimeoutMillis = InternalCommandTimeoutMillis,
+        )
+    }
+
+    private suspend fun executeManagedScript(
+        script: String,
+        commandFallback: String = "",
+        workingDirectoryFallback: String = "",
+        runIdFallback: String = "",
+    ): String {
+        val raw = runCatching {
+            JSONObject(
+                dispatchCommand(
+                    command = script,
+                    workingDirectory = TermuxContract.HomeDirectory,
+                )
+            )
+        }.getOrNull()
+            ?: return buildManagedToolError(
+                command = commandFallback,
+                workingDirectory = workingDirectoryFallback,
+                runId = runIdFallback,
+                message = "Termux returned unreadable command output.",
+            )
+
+        if (!raw.optBoolean("ok")) {
+            return buildManagedToolError(
+                command = commandFallback,
+                workingDirectory = workingDirectoryFallback,
+                runId = runIdFallback,
+                message = raw.optString("errmsg").ifBlank { "Failed to dispatch the managed bash command." },
+                hint = raw.optString("hint"),
+                stdout = raw.optString("stdout"),
+                stderr = raw.optString("stderr"),
+            )
+        }
+
+        val values = parseKeyValueOutput(raw.optString("stdout"))
+        if (values.isEmpty()) {
+            return buildManagedToolError(
+                command = commandFallback,
+                workingDirectory = workingDirectoryFallback,
+                runId = runIdFallback,
+                message = "Termux returned an unreadable managed command payload.",
+                stdout = raw.optString("stdout"),
+                stderr = raw.optString("stderr"),
+            )
+        }
+
+        return buildManagedCommandResult(
+            values = values,
+            fallbackCommand = commandFallback,
+            fallbackWorkingDirectory = workingDirectoryFallback,
+            fallbackRunId = runIdFallback,
+        )
+    }
+
+    private suspend fun dispatchCommand(
+        command: String,
+        workingDirectory: String,
+        awaitTimeoutMillis: Long? = null,
+    ): String {
+        val startedAt = System.currentTimeMillis()
+        logTermux(
+            "dispatch start workdir=$workingDirectory timeout_ms=${
+                awaitTimeoutMillis ?: -1L
+            } command=${summarizeCommand(command)}",
+        )
+        if (!isTermuxInstalled()) {
+            return buildSetupErrorResult(
+                command = command,
+                workingDirectory = workingDirectory,
+                message = "Termux is not installed.",
+                hint = "Install the Termux app (package com.termux) first.",
+            )
+        }
+
+        if (!hasRunCommandPermission()) {
+            return buildSetupErrorResult(
+                command = command,
+                workingDirectory = workingDirectory,
+                message = "Aether does not have Termux RUN_COMMAND permission.",
+                hint = "Grant 'Run commands in Termux environment' to Aether in Android Settings.",
+            )
+        }
+
+        val executionId = TermuxPendingResults.nextExecutionId()
+        val deferred = TermuxPendingResults.register(executionId)
+        val resultIntent = Intent(context, TermuxResultReceiver::class.java)
+            .putExtra(TermuxContract.ExecutionIdExtra, executionId)
+        val flags = PendingIntent.FLAG_ONE_SHOT or
+            PendingIntent.FLAG_UPDATE_CURRENT or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
+        val pendingIntent = PendingIntent.getBroadcast(
+            context,
+            executionId,
+            resultIntent,
+            flags,
+        )
+
+        val request = Intent().apply {
+            component = ComponentName(
+                TermuxContract.PackageName,
+                TermuxContract.RunCommandService,
+            )
+            action = TermuxContract.RunCommandAction
+            putExtra(TermuxContract.RunCommandPathExtra, TermuxContract.BashPath)
+            putExtra(TermuxContract.RunCommandArgumentsExtra, arrayOf("-s"))
+            putExtra(TermuxContract.RunCommandStdinExtra, command)
+            putExtra(TermuxContract.RunCommandWorkdirExtra, workingDirectory)
+            putExtra(TermuxContract.RunCommandBackgroundExtra, true)
+            putExtra(TermuxContract.RunCommandPendingIntentExtra, pendingIntent)
+            putExtra(TermuxContract.RunCommandLabelExtra, "Aether bash")
+            putExtra(
+                TermuxContract.RunCommandDescriptionExtra,
+                "Runs a bash command requested by the Aether Android agent.",
+            )
+        }
+
+        return try {
+            val startResult = context.startService(request)
+            if (startResult == null) {
+                TermuxPendingResults.remove(executionId)
+                logTermux(
+                    "dispatch rejected duration_ms=${System.currentTimeMillis() - startedAt} " +
+                        "command=${summarizeCommand(command)}",
+                )
+                buildSetupErrorResult(
+                    command = command,
+                    workingDirectory = workingDirectory,
+                    message = "Termux rejected the RUN_COMMAND request.",
+                    hint = "Make sure allow-external-apps=true is set in ~/.termux/termux.properties.",
+                )
+            } else {
+                val result = if (awaitTimeoutMillis == null) {
+                    deferred.await()
+                } else {
+                    withTimeoutOrNull(awaitTimeoutMillis) { deferred.await() }
+                        ?: run {
+                            TermuxPendingResults.remove(executionId)
+                            logTermux(
+                                "dispatch timeout duration_ms=${System.currentTimeMillis() - startedAt} " +
+                                    "command=${summarizeCommand(command)}",
+                            )
+                            return buildSetupErrorResult(
+                                command = command,
+                                workingDirectory = workingDirectory,
+                                message = "Timed out waiting for Termux to reply.",
+                                hint = "Open Termux once, then make sure allow-external-apps=true is enabled.",
+                            )
+                        }
+                }
+                logTermux(
+                    "dispatch result duration_ms=${System.currentTimeMillis() - startedAt} " +
+                        "exit_code=${result.exitCode} err=${result.err} " +
+                        "command=${summarizeCommand(command)}",
+                )
+                buildCommandResult(
+                    command = command,
+                    workingDirectory = workingDirectory,
+                    durationMillis = System.currentTimeMillis() - startedAt,
+                    result = result,
+                )
+            }
+        } catch (throwable: Throwable) {
+            TermuxPendingResults.remove(executionId)
+            logTermux(
+                "dispatch failure duration_ms=${System.currentTimeMillis() - startedAt} " +
+                    "message=${throwable.message.orEmpty()} command=${summarizeCommand(command)}",
+            )
+            buildSetupErrorResult(
+                command = command,
+                workingDirectory = workingDirectory,
+                message = throwable.message ?: "Failed to dispatch command to Termux.",
+                hint = "Check Termux permission, allow-external-apps, and battery restrictions.",
+            )
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun isTermuxInstalled(): Boolean = runCatching {
+        context.packageManager.getPackageInfo(TermuxContract.PackageName, 0)
+        true
+    }.getOrDefault(false)
+
+    private fun hasRunCommandPermission(): Boolean =
+        ContextCompat.checkSelfPermission(
+            context,
+            TermuxContract.RunCommandPermission,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    private fun resolveTailBytes(arguments: JSONObject): Int {
+        val requested = arguments.takeIf { it.has("tail_bytes") }?.optInt("tail_bytes")
+            ?: arguments.takeIf { it.has("tailBytes") }?.optInt("tailBytes")
+            ?: DefaultManagedLogTailBytes
+        return requested.coerceIn(1, MaxManagedLogTailBytes)
+    }
+
+    private suspend fun prepareWorkingDirectoryIfNeeded(
+        workingDirectory: String,
+    ): JSONObject? {
+        val normalizedWorkingDirectory = normalizeTermuxPath(workingDirectory)
+        if (!shouldPrepareWorkingDirectory(normalizedWorkingDirectory)) return null
+
+        val raw = runCatching {
+            JSONObject(
+                dispatchCommand(
+                    command = buildEnsureDirectoryScript(normalizedWorkingDirectory),
+                    workingDirectory = TermuxContract.HomeDirectory,
+                )
+            )
+        }.getOrElse {
+            JSONObject().apply {
+                put("ok", false)
+                put("errmsg", "Termux returned unreadable output while preparing the workspace directory.")
+            }
+        }
+
+        return raw.takeUnless { it.optBoolean("ok") }
+    }
+
+    private fun normalizeTermuxPath(path: String): String = when {
+        path == "~" -> TermuxContract.HomeDirectory
+        path.startsWith("~/") -> TermuxContract.HomeDirectory + path.removePrefix("~")
+        else -> path
+    }
+
+    private fun shouldPrepareWorkingDirectory(
+        workingDirectory: String,
+    ): Boolean = workingDirectory == SessionWorkspaceRoot ||
+        workingDirectory.startsWith("$SessionWorkspaceRoot/")
+
+    private fun buildEnsureDirectoryScript(
+        workingDirectory: String,
+    ): String = buildString {
+        appendLine("set -euo pipefail")
+        appendLine("path=\"\$(printf '%s' '${encodeBase64(workingDirectory)}' | base64 -d)\"")
+        appendLine("mkdir -p \"\$path\"")
+    }
+
+    private fun isValidRunId(runId: String): Boolean =
+        runId.isNotBlank() && runId.all { it.isLetterOrDigit() || it == '-' || it == '_' }
+
+    private fun buildManagedCommandResult(
+        values: Map<String, String>,
+        fallbackCommand: String,
+        fallbackWorkingDirectory: String,
+        fallbackRunId: String,
+    ): String {
+        if (!values["exists"].toBoolean()) {
+            return JSONObject().apply {
+                put("ok", false)
+                put("status", "not_found")
+                put("running", false)
+                put("completed", true)
+                put("run_id", fallbackRunId.ifBlank { values["run_id"].orEmpty() })
+                put("command", fallbackCommand)
+                put("working_directory", fallbackWorkingDirectory)
+                put("stdout", "")
+                put("stderr", "")
+                put("exit_code", JSONObject.NULL)
+                put("err", -1)
+                put("errmsg", "No managed bash run was found for this run_id.")
+            }.toString()
+        }
+
+        val command = decodeBase64(values["command_b64"].orEmpty()).ifBlank { fallbackCommand }
+        val workingDirectory = decodeBase64(values["working_directory_b64"].orEmpty())
+            .ifBlank { fallbackWorkingDirectory }
+        val runId = values["run_id"].orEmpty().ifBlank { fallbackRunId }
+        val status = values["status"].orEmpty().ifBlank { "unknown" }
+        val stdout = decodeBase64(values["stdout_b64"].orEmpty())
+        val stderr = decodeBase64(values["stderr_b64"].orEmpty())
+        val stdoutBytes = values["stdout_bytes"]?.toLongOrNull()
+            ?: stdout.toByteArray(Charsets.UTF_8).size.toLong()
+        val stderrBytes = values["stderr_bytes"]?.toLongOrNull()
+            ?: stderr.toByteArray(Charsets.UTF_8).size.toLong()
+        val stdoutTruncated = values["stdout_truncated"].toBoolean()
+        val stderrTruncated = values["stderr_truncated"].toBoolean()
+        val durationMillis = values["duration_ms"]?.toLongOrNull() ?: 0L
+        val pid = values["pid"]?.toIntOrNull()
+        val childPid = values["child_pid"]?.toIntOrNull()
+        val exitCode = values["exit_code"]?.toIntOrNull()
+        val running = status == "running" || status == "launching"
+        val completed = status in setOf("completed", "failed", "cancelled", "killed")
+        val message = when (status) {
+            "running" -> ""
+            "launching" -> "Command is still starting."
+            "completed" -> ""
+            "failed" -> if (exitCode != null) {
+                "Command exited with code $exitCode."
+            } else {
+                "Command failed."
+            }
+            "cancelled",
+            "killed" -> "Command was stopped."
+            else -> "Command status is unavailable."
+        }
+        val hint = when (status) {
+            "running",
+            "launching" -> "Command is still running. Use sleep, then fetch_bash_output with this run_id to inspect more logs, or kill_bash to stop it."
+            else -> ""
+        }
+        val ok = when (status) {
+            "running",
+            "launching" -> true
+            "completed" -> exitCode == null || exitCode == 0
+            else -> false
+        }
+
+        return JSONObject().apply {
+            put("ok", ok)
+            put("status", status)
+            put("running", running)
+            put("completed", completed)
+            put("run_id", runId)
+            put("command", command)
+            put("working_directory", workingDirectory)
+            put("duration_ms", durationMillis.coerceAtLeast(0L))
+            put("stdout", stdout)
+            put("stderr", stderr)
+            put("stdout_bytes", stdoutBytes)
+            put("stderr_bytes", stderrBytes)
+            put("stdout_truncated", stdoutTruncated)
+            put("stderr_truncated", stderrTruncated)
+            if (pid != null) {
+                put("pid", pid)
+            }
+            if (childPid != null) {
+                put("child_pid", childPid)
+            }
+            if (exitCode != null) {
+                put("exit_code", exitCode)
+            } else {
+                put("exit_code", JSONObject.NULL)
+            }
+            put("err", -1)
+            put("errmsg", message)
+            if (hint.isNotBlank()) {
+                put("hint", hint)
+            }
+        }.toString()
+    }
+
+    private fun buildManagedToolError(
+        command: String,
+        workingDirectory: String,
+        runId: String,
+        message: String,
+        hint: String = "",
+        stdout: String = "",
+        stderr: String = "",
+    ): String = JSONObject().apply {
+        put("ok", false)
+        put("status", "error")
+        put("running", false)
+        put("completed", true)
+        put("run_id", runId)
+        put("command", command)
+        put("working_directory", workingDirectory)
+        put("stdout", stdout)
+        put("stderr", stderr)
+        put("exit_code", JSONObject.NULL)
+        put("err", -1)
+        put("errmsg", message)
+        if (hint.isNotBlank()) {
+            put("hint", hint)
+        }
+    }.toString()
+
+    private fun buildLaunchManagedCommandScript(
+        runId: String,
+        command: String,
+        workingDirectory: String,
+        tailBytes: Int,
+    ): String = buildString {
+        appendManagedShellPreamble(this)
+        appendLine("run_id='${escapeForSingleQuoted(runId)}'")
+        appendLine("run_dir='${escapeForSingleQuoted(TermuxContract.ManagedCommandsDirectory)}/$runId'")
+        appendLine("tail_bytes=$tailBytes")
+        appendCommonManagedPaths(this)
+        appendSnapshotHelpers(this)
+        appendLine("mkdir -p \"\$run_dir\"")
+        appendLine("printf '%s' '${encodeBase64(command)}' > \"\$command_meta_path\"")
+        appendLine("printf '%s' '${encodeBase64(workingDirectory)}' > \"\$working_directory_meta_path\"")
+        appendLine("printf '%s' \"\$(decode_b64 '${encodeBase64(command)}')\" > \"\$command_path\"")
+        appendLine("chmod 700 \"\$command_path\"")
+        appendLine(": > \"\$stdout_path\"")
+        appendLine(": > \"\$stderr_path\"")
+        appendLine("printf '%s' 'launching' > \"\$state_path\"")
+        appendLine("rm -f \"\$pid_path\" \"\$child_pid_path\" \"\$exit_code_path\" \"\$finished_path\"")
+        appendLine("cat > \"\$runner_path\" <<'AETHER_RUNNER'")
+        appendRunnerScript(
+            builder = this,
+            runId = runId,
+            workingDirectory = workingDirectory,
+        )
+        appendLine("AETHER_RUNNER")
+        appendLine("chmod 700 \"\$runner_path\"")
+        appendLine("nohup \"\$runner_path\" >/dev/null 2>&1 </dev/null &")
+        appendLine("printf '%s' \"\$!\" > \"\$pid_path\"")
+        appendLine("elapsed=0")
+        appendLine("while [ \"\$elapsed\" -lt $ManagedCommandWatchWindowSeconds ]; do")
+        appendLine("  state=\"\$(cat \"\$state_path\" 2>/dev/null || printf 'launching')\"")
+        appendLine("  if [ \"\$state\" = 'running' ]; then")
+        appendLine("    break")
+        appendLine("  fi")
+        appendLine("  if [ \"\$state\" != 'launching' ]; then")
+        appendLine("    break")
+        appendLine("  fi")
+        appendLine("  sleep 1")
+        appendLine("  elapsed=\$((elapsed + 1))")
+        appendLine("done")
+        appendLine("emit_managed_snapshot")
+    }
+
+    private fun buildInspectManagedCommandScript(
+        runId: String,
+        tailBytes: Int,
+    ): String = buildString {
+        appendManagedShellPreamble(this)
+        appendLine("run_id='${escapeForSingleQuoted(runId)}'")
+        appendLine("run_dir='${escapeForSingleQuoted(TermuxContract.ManagedCommandsDirectory)}/$runId'")
+        appendLine("tail_bytes=$tailBytes")
+        appendCommonManagedPaths(this)
+        appendSnapshotHelpers(this)
+        appendLine("emit_managed_snapshot")
+    }
+
+    private fun buildKillManagedCommandScript(
+        runId: String,
+        tailBytes: Int,
+    ): String = buildString {
+        appendManagedShellPreamble(this)
+        appendLine("run_id='${escapeForSingleQuoted(runId)}'")
+        appendLine("run_dir='${escapeForSingleQuoted(TermuxContract.ManagedCommandsDirectory)}/$runId'")
+        appendLine("tail_bytes=$tailBytes")
+        appendCommonManagedPaths(this)
+        appendSnapshotHelpers(this)
+        appendLine("if [ ! -d \"\$run_dir\" ]; then")
+        appendLine("  emit_kv exists false")
+        appendLine("  emit_kv run_id \"\$run_id\"")
+        appendLine("  exit 0")
+        appendLine("fi")
+        appendLine("state=\"\$(cat \"\$state_path\" 2>/dev/null || printf 'unknown')\"")
+        appendLine("if [ \"\$state\" = 'running' ] || [ \"\$state\" = 'launching' ]; then")
+        appendLine("  child_pid=\"\$(read_file_trimmed \"\$child_pid_path\")\"")
+        appendLine("  runner_pid=\"\$(read_file_trimmed \"\$pid_path\")\"")
+        appendLine("  kill_pid_tree \"\$child_pid\" TERM")
+        appendLine("  kill_pid_tree \"\$runner_pid\" TERM")
+        appendLine("  sleep 1")
+        appendLine("  kill_pid_tree \"\$child_pid\" KILL")
+        appendLine("  kill_pid_tree \"\$runner_pid\" KILL")
+        appendLine("  printf '%s' 'cancelled' > \"\$state_path\"")
+        appendLine("  printf '%s' '143' > \"\$exit_code_path\"")
+        appendLine("  now_ms > \"\$finished_path\"")
+        appendLine("fi")
+        appendLine("emit_managed_snapshot")
+    }
+
+    private fun appendManagedShellPreamble(builder: StringBuilder) {
+        builder.appendLine("set -euo pipefail")
+        builder.appendLine("decode_b64() {")
+        builder.appendLine("  printf '%s' \"\$1\" | base64 -d")
+        builder.appendLine("}")
+        builder.appendLine("emit_kv() {")
+        builder.appendLine("  printf '%s=%s\\n' \"\$1\" \"\$2\"")
+        builder.appendLine("}")
+        builder.appendLine("read_file_trimmed() {")
+        builder.appendLine("  local file_path=\"\$1\"")
+        builder.appendLine("  if [ ! -f \"\$file_path\" ]; then")
+        builder.appendLine("    printf ''")
+        builder.appendLine("    return 0")
+        builder.appendLine("  fi")
+        builder.appendLine("  tr -d '[:space:]' < \"\$file_path\"")
+        builder.appendLine("}")
+        builder.appendLine("file_bytes() {")
+        builder.appendLine("  local file_path=\"\$1\"")
+        builder.appendLine("  if [ ! -f \"\$file_path\" ]; then")
+        builder.appendLine("    printf '0'")
+        builder.appendLine("    return 0")
+        builder.appendLine("  fi")
+        builder.appendLine("  wc -c < \"\$file_path\" | tr -d '[:space:]'")
+        builder.appendLine("}")
+        builder.appendLine("tail_file_b64() {")
+        builder.appendLine("  local file_path=\"\$1\"")
+        builder.appendLine("  local max_bytes=\"\$2\"")
+        builder.appendLine("  if [ ! -f \"\$file_path\" ]; then")
+        builder.appendLine("    printf ''")
+        builder.appendLine("    return 0")
+        builder.appendLine("  fi")
+        builder.appendLine("  local value")
+        builder.appendLine("  value=\"\$(tail -c \"\$max_bytes\" -- \"\$file_path\" 2>/dev/null; printf '\\037')\"")
+        builder.appendLine("  value=\"\${value%\$'\\037'}\"")
+        builder.appendLine("  printf '%s' \"\$value\" | base64 | tr -d '\\n'")
+        builder.appendLine("}")
+        builder.appendLine("now_ms() {")
+        builder.appendLine("  date +%s%3N")
+        builder.appendLine("}")
+        builder.appendLine("kill_pid_tree() {")
+        builder.appendLine("  local pid=\"\$1\"")
+        builder.appendLine("  local signal=\"\$2\"")
+        builder.appendLine("  if [ -z \"\$pid\" ]; then")
+        builder.appendLine("    return 0")
+        builder.appendLine("  fi")
+        builder.appendLine("  if command -v pkill >/dev/null 2>&1; then")
+        builder.appendLine("    pkill -\"\$signal\" -P \"\$pid\" 2>/dev/null || true")
+        builder.appendLine("  fi")
+        builder.appendLine("  kill -\"\$signal\" \"\$pid\" 2>/dev/null || true")
+        builder.appendLine("}")
+    }
+
+    private fun appendCommonManagedPaths(builder: StringBuilder) {
+        builder.appendLine("command_path=\"\$run_dir/command.sh\"")
+        builder.appendLine("runner_path=\"\$run_dir/runner.sh\"")
+        builder.appendLine("command_meta_path=\"\$run_dir/command.b64\"")
+        builder.appendLine("working_directory_meta_path=\"\$run_dir/working_directory.b64\"")
+        builder.appendLine("stdout_path=\"\$run_dir/stdout.log\"")
+        builder.appendLine("stderr_path=\"\$run_dir/stderr.log\"")
+        builder.appendLine("state_path=\"\$run_dir/state\"")
+        builder.appendLine("pid_path=\"\$run_dir/pid\"")
+        builder.appendLine("child_pid_path=\"\$run_dir/child_pid\"")
+        builder.appendLine("exit_code_path=\"\$run_dir/exit_code\"")
+        builder.appendLine("started_path=\"\$run_dir/started_at\"")
+        builder.appendLine("finished_path=\"\$run_dir/finished_at\"")
+    }
+
+    private fun appendSnapshotHelpers(builder: StringBuilder) {
+        builder.appendLine("emit_managed_snapshot() {")
+        builder.appendLine("  if [ ! -d \"\$run_dir\" ]; then")
+        builder.appendLine("    emit_kv exists false")
+        builder.appendLine("    emit_kv run_id \"\$run_id\"")
+        builder.appendLine("    return 0")
+        builder.appendLine("  fi")
+        builder.appendLine("  command_b64=\"\$(read_file_trimmed \"\$command_meta_path\")\"")
+        builder.appendLine("  working_directory_b64=\"\$(read_file_trimmed \"\$working_directory_meta_path\")\"")
+        builder.appendLine("  status=\"\$(cat \"\$state_path\" 2>/dev/null || printf 'unknown')\"")
+        builder.appendLine("  stdout_bytes=\"\$(file_bytes \"\$stdout_path\")\"")
+        builder.appendLine("  stderr_bytes=\"\$(file_bytes \"\$stderr_path\")\"")
+        builder.appendLine("  stdout_truncated=false")
+        builder.appendLine("  stderr_truncated=false")
+        builder.appendLine("  if [ \"\$stdout_bytes\" -gt \"\$tail_bytes\" ]; then")
+        builder.appendLine("    stdout_truncated=true")
+        builder.appendLine("  fi")
+        builder.appendLine("  if [ \"\$stderr_bytes\" -gt \"\$tail_bytes\" ]; then")
+        builder.appendLine("    stderr_truncated=true")
+        builder.appendLine("  fi")
+        builder.appendLine("  started_at=\"\$(read_file_trimmed \"\$started_path\")\"")
+        builder.appendLine("  finished_at=\"\$(read_file_trimmed \"\$finished_path\")\"")
+        builder.appendLine("  if [ -n \"\$started_at\" ]; then")
+        builder.appendLine("    if [ -n \"\$finished_at\" ]; then")
+        builder.appendLine("      duration_ms=\$((finished_at - started_at))")
+        builder.appendLine("    else")
+        builder.appendLine("      duration_ms=\$((\$(now_ms) - started_at))")
+        builder.appendLine("    fi")
+        builder.appendLine("  else")
+        builder.appendLine("    duration_ms=0")
+        builder.appendLine("  fi")
+        builder.appendLine("  emit_kv exists true")
+        builder.appendLine("  emit_kv run_id \"\$run_id\"")
+        builder.appendLine("  emit_kv command_b64 \"\$command_b64\"")
+        builder.appendLine("  emit_kv working_directory_b64 \"\$working_directory_b64\"")
+        builder.appendLine("  emit_kv status \"\$status\"")
+        builder.appendLine("  emit_kv pid \"\$(read_file_trimmed \"\$pid_path\")\"")
+        builder.appendLine("  emit_kv child_pid \"\$(read_file_trimmed \"\$child_pid_path\")\"")
+        builder.appendLine("  emit_kv exit_code \"\$(read_file_trimmed \"\$exit_code_path\")\"")
+        builder.appendLine("  emit_kv stdout_b64 \"\$(tail_file_b64 \"\$stdout_path\" \"\$tail_bytes\")\"")
+        builder.appendLine("  emit_kv stderr_b64 \"\$(tail_file_b64 \"\$stderr_path\" \"\$tail_bytes\")\"")
+        builder.appendLine("  emit_kv stdout_bytes \"\$stdout_bytes\"")
+        builder.appendLine("  emit_kv stderr_bytes \"\$stderr_bytes\"")
+        builder.appendLine("  emit_kv stdout_truncated \"\$stdout_truncated\"")
+        builder.appendLine("  emit_kv stderr_truncated \"\$stderr_truncated\"")
+        builder.appendLine("  emit_kv duration_ms \"\$duration_ms\"")
+        builder.appendLine("}")
+    }
+
+    private fun appendRunnerScript(
+        builder: StringBuilder,
+        runId: String,
+        workingDirectory: String,
+    ) {
+        builder.appendLine("#!/data/data/com.termux/files/usr/bin/bash")
+        builder.appendLine("set -euo pipefail")
+        builder.appendLine("now_ms() {")
+        builder.appendLine("  date +%s%3N")
+        builder.appendLine("}")
+        builder.appendLine("run_dir='${escapeForSingleQuoted(TermuxContract.ManagedCommandsDirectory)}/$runId'")
+        builder.appendLine("working_directory=\"\$(printf '%s' '${encodeBase64(workingDirectory)}' | base64 -d)\"")
+        builder.appendLine("stdout_path=\"\$run_dir/stdout.log\"")
+        builder.appendLine("stderr_path=\"\$run_dir/stderr.log\"")
+        builder.appendLine("state_path=\"\$run_dir/state\"")
+        builder.appendLine("child_pid_path=\"\$run_dir/child_pid\"")
+        builder.appendLine("exit_code_path=\"\$run_dir/exit_code\"")
+        builder.appendLine("started_path=\"\$run_dir/started_at\"")
+        builder.appendLine("finished_path=\"\$run_dir/finished_at\"")
+        builder.appendLine("command_path=\"\$run_dir/command.sh\"")
+        builder.appendLine("printf '%s' 'running' > \"\$state_path\"")
+        builder.appendLine("now_ms > \"\$started_path\"")
+        builder.appendLine("if ! cd \"\$working_directory\"; then")
+        builder.appendLine("  printf 'Failed to enter working directory: %s\\n' \"\$working_directory\" > \"\$stderr_path\"")
+        builder.appendLine("  printf '%s' 'failed' > \"\$state_path\"")
+        builder.appendLine("  printf '%s' '1' > \"\$exit_code_path\"")
+        builder.appendLine("  now_ms > \"\$finished_path\"")
+        builder.appendLine("  exit 1")
+        builder.appendLine("fi")
+        builder.appendLine("bash \"\$command_path\" > \"\$stdout_path\" 2> \"\$stderr_path\" &")
+        builder.appendLine("child_pid=\$!")
+        builder.appendLine("printf '%s' \"\$child_pid\" > \"\$child_pid_path\"")
+        builder.appendLine("set +e")
+        builder.appendLine("wait \"\$child_pid\"")
+        builder.appendLine("exit_code=\$?")
+        builder.appendLine("set -e")
+        builder.appendLine("current_state=\"\$(cat \"\$state_path\" 2>/dev/null || printf '')\"")
+        builder.appendLine("if [ \"\$current_state\" = 'cancelled' ] || [ \"\$current_state\" = 'killed' ]; then")
+        builder.appendLine("  if [ ! -f \"\$exit_code_path\" ]; then")
+        builder.appendLine("    printf '%s' \"\$exit_code\" > \"\$exit_code_path\"")
+        builder.appendLine("  fi")
+        builder.appendLine("else")
+        builder.appendLine("  printf '%s' \"\$exit_code\" > \"\$exit_code_path\"")
+        builder.appendLine("  if [ \"\$exit_code\" -eq 0 ]; then")
+        builder.appendLine("    printf '%s' 'completed' > \"\$state_path\"")
+        builder.appendLine("  else")
+        builder.appendLine("    printf '%s' 'failed' > \"\$state_path\"")
+        builder.appendLine("  fi")
+        builder.appendLine("fi")
+        builder.appendLine("if [ ! -f \"\$finished_path\" ]; then")
+        builder.appendLine("  now_ms > \"\$finished_path\"")
+        builder.appendLine("fi")
+        builder.appendLine("exit \"\$exit_code\"")
+    }
+
+    private fun buildCommandResult(
+        command: String,
+        workingDirectory: String,
+        durationMillis: Long,
+        result: TermuxCommandResult,
+    ): String = JSONObject().apply {
+        put("ok", result.err == -1 && result.exitCode == 0)
+        put("command", command)
+        put("working_directory", workingDirectory)
+        put("duration_ms", durationMillis.coerceAtLeast(0L))
+        put("stdout", result.stdout)
+        put("stderr", result.stderr)
+        put("exit_code", result.exitCode)
+        put("err", result.err)
+        put("errmsg", result.errmsg)
+    }.toString()
+
+    private fun buildSetupErrorResult(
+        command: String,
+        workingDirectory: String,
+        message: String,
+        hint: String,
+    ): String = JSONObject().apply {
+        put("ok", false)
+        put("command", command)
+        put("working_directory", workingDirectory)
+        put("stdout", "")
+        put("stderr", "")
+        put("exit_code", -1)
+        put("err", -1)
+        put("errmsg", message)
+        put("hint", hint)
+    }.toString()
+
+    private fun buildInvalidArgumentsResult(message: String): String = JSONObject().apply {
+        put("ok", false)
+        put("errmsg", message)
+    }.toString()
+
+    private fun parseKeyValueOutput(stdout: String): Map<String, String> = buildMap {
+        stdout.lineSequence()
+            .filter { it.isNotBlank() }
+            .forEach { line ->
+                val separatorIndex = line.indexOf('=')
+                if (separatorIndex <= 0) return@forEach
+                put(
+                    line.substring(0, separatorIndex),
+                    line.substring(separatorIndex + 1),
+                )
+            }
+    }
+
+    private fun encodeBase64(value: String): String =
+        Base64.getEncoder().encodeToString(value.toByteArray(Charsets.UTF_8))
+
+    private fun decodeBase64(value: String): String =
+        if (value.isBlank()) {
+            ""
+        } else {
+            runCatching { String(Base64.getDecoder().decode(value), Charsets.UTF_8) }
+                .getOrDefault("")
+        }
+
+    private fun escapeForSingleQuoted(value: String): String =
+        value.replace("'", "'\"'\"'")
+
+    private fun summarizeCommand(command: String): String =
+        command
+            .lineSequence()
+            .firstOrNull()
+            .orEmpty()
+            .replace(Regex("\\s+"), " ")
+            .take(120)
+
+private fun logTermux(message: String) {
+    if (EnableTermuxLogging) {
+        Log.d(TermuxLogTag, message)
+    }
+}
+}
+
+internal data class TermuxCommandResult(
+    val stdout: String,
+    val stderr: String,
+    val exitCode: Int,
+    val err: Int,
+    val errmsg: String,
+)
+
+internal object TermuxPendingResults {
+    private val nextId = AtomicInteger(1000)
+    private val pending = LinkedHashMap<Int, CompletableDeferred<TermuxCommandResult>>()
+
+    fun nextExecutionId(): Int = nextId.incrementAndGet()
+
+    fun register(executionId: Int): CompletableDeferred<TermuxCommandResult> {
+        val deferred = CompletableDeferred<TermuxCommandResult>()
+        synchronized(pending) {
+            pending[executionId] = deferred
+        }
+        deferred.invokeOnCompletion {
+            synchronized(pending) {
+                pending.remove(executionId)
+            }
+        }
+        return deferred
+    }
+
+    fun complete(
+        executionId: Int,
+        result: TermuxCommandResult,
+    ) {
+        synchronized(pending) {
+            pending.remove(executionId)?.complete(result)
+        }
+    }
+
+    fun remove(executionId: Int) {
+        synchronized(pending) {
+            pending.remove(executionId)?.cancel()
+        }
+    }
+}
+
+internal object TermuxManagedRuns {
+    private val nextId = AtomicInteger(1)
+
+    fun nextRunId(): String = "run-${System.currentTimeMillis()}-${nextId.getAndIncrement()}"
+}
+
+internal object TermuxContract {
+    const val PackageName = "com.termux"
+    const val RunCommandPermission = "com.termux.permission.RUN_COMMAND"
+    const val RunCommandService = "com.termux.app.RunCommandService"
+    const val RunCommandAction = "com.termux.RUN_COMMAND"
+    const val RunCommandPathExtra = "com.termux.RUN_COMMAND_PATH"
+    const val RunCommandArgumentsExtra = "com.termux.RUN_COMMAND_ARGUMENTS"
+    const val RunCommandStdinExtra = "com.termux.RUN_COMMAND_STDIN"
+    const val RunCommandWorkdirExtra = "com.termux.RUN_COMMAND_WORKDIR"
+    const val RunCommandBackgroundExtra = "com.termux.RUN_COMMAND_BACKGROUND"
+    const val RunCommandPendingIntentExtra = "com.termux.RUN_COMMAND_PENDING_INTENT"
+    const val RunCommandLabelExtra = "com.termux.RUN_COMMAND_COMMAND_LABEL"
+    const val RunCommandDescriptionExtra = "com.termux.RUN_COMMAND_COMMAND_DESCRIPTION"
+    const val TermuxSettingsActivity = "com.termux.app.activities.SettingsActivity"
+    const val TermuxHomeActivity = "com.termux.HomeActivity"
+    const val ResultBundleExtra = "result"
+    const val ResultStdoutExtra = "stdout"
+    const val ResultStderrExtra = "stderr"
+    const val ResultExitCodeExtra = "exitCode"
+    const val ResultErrExtra = "err"
+    const val ResultErrmsgExtra = "errmsg"
+    const val ExecutionIdExtra = "com.baimoqilin.aether.termux.EXECUTION_ID"
+    const val BashPath = "/data/data/com.termux/files/usr/bin/bash"
+    const val HomeDirectory = "/data/data/com.termux/files/home"
+    const val ManagedCommandsDirectory = "$HomeDirectory/.aether/bash-runs"
+}
