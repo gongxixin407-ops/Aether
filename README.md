@@ -66,8 +66,8 @@ Aether's UI and interactions are heavily inspired by excellent, mature applicati
 ## 🛠️ Tech Stack
 
 - **Core**: Kotlin / Jetpack Compose / Coroutines
-- **System**: Root / Shizuku API
-- **AI**: OpenAI Compatible API / MCP (Model Context Protocol)
+- **LLM**: OpenAI (Responses) / OpenAI (Chat Completions) / Anthropic Messages / Vertex AI (Express Mode)
+- **Extension**: MCP (stdio, HTTP) / Agent Skills
 - **Tooling**: Termux Integration / WebTools (JSoup, Flexmark)
 - **Data**: DataStore / YAML configuration
 
@@ -81,7 +81,7 @@ Aether's UI and interactions are heavily inspired by excellent, mature applicati
 - Optional: [Termux](https://termux.dev/) installed
 
 ### Installation
-1. Download the latest [Release APK](https://github.com/zhousl/Aether/releases).
+1. Download the latest [Release APK](https://github.com/Zhou-Shilin/Aether/releases).
 2. Follow the "Get Started" tour to configure the app.
 
 ---
