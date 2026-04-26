@@ -2,6 +2,7 @@ package com.zhousl.aether.data
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 import java.util.UUID
 
 enum class LlmProvider(
@@ -51,6 +52,39 @@ enum class AgentModeAuthorizationMethod(
     }
 }
 
+enum class AppLanguage(
+    val storageValue: String,
+    val languageTag: String,
+) {
+    English(
+        storageValue = "en",
+        languageTag = "en",
+    ),
+    SimplifiedChinese(
+        storageValue = "zh-CN",
+        languageTag = "zh-CN",
+    );
+
+    companion object {
+        fun fromStorage(
+            value: String?,
+            defaultValue: AppLanguage = defaultAppLanguage(),
+        ): AppLanguage = entries.firstOrNull { it.storageValue == value } ?: defaultValue
+    }
+}
+
+enum class AppThemeMode(
+    val storageValue: String,
+) {
+    Light("light"),
+    Dark("dark");
+
+    companion object {
+        fun fromStorage(value: String?): AppThemeMode =
+            entries.firstOrNull { it.storageValue == value } ?: Light
+    }
+}
+
 data class AppSettings(
     val provider: LlmProvider = LlmProvider.OpenAiCompatible,
     val apiKey: String = "",
@@ -63,6 +97,8 @@ data class AppSettings(
     val notifyOnTaskCompletion: Boolean = true,
     val agentModeAuthorizationEnabled: Boolean = false,
     val agentModeAuthorizationMethod: AgentModeAuthorizationMethod = AgentModeAuthorizationMethod.Shizuku,
+    val language: AppLanguage = defaultAppLanguage(),
+    val themeMode: AppThemeMode = AppThemeMode.Light,
     val onboardingSeenVersion: Int = 0,
     val onboardingCompletedVersion: Int = 0,
 )
@@ -72,6 +108,14 @@ const val DefaultLlmInactivityReconnectTimeoutSeconds = 360
 private const val MinLlmInactivityReconnectTimeoutSeconds = 30
 private const val MaxLlmInactivityReconnectTimeoutSeconds = 3600
 const val OnboardingStarterPrompt = "Hi"
+
+fun defaultAppLanguage(
+    locale: Locale = Locale.getDefault(),
+): AppLanguage = if (locale.language.equals("zh", ignoreCase = true)) {
+    AppLanguage.SimplifiedChinese
+} else {
+    AppLanguage.English
+}
 
 fun normalizeLlmInactivityReconnectTimeoutSeconds(
     value: Int?,

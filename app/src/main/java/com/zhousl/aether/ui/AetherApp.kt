@@ -66,6 +66,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
@@ -120,6 +121,7 @@ import java.io.File
 private data class SuggestionAction(
     val icon: ImageVector,
     val label: String,
+    val tint: Color,
 )
 
 private sealed interface PendingSaveTarget {
@@ -142,13 +144,37 @@ private fun AppScreen.depth(): Int = when (this) {
 fun AetherApp(
     viewModel: AetherViewModel = viewModel(),
 ) {
+    val uiState = viewModel.uiState.collectAsStateWithLifecycle().value
+    val strings = remember(uiState.settings.language) { aetherStringsFor(uiState.settings.language) }
+
+    AetherLocalization(uiState.settings.language) {
+        AetherTheme(themeMode = uiState.settings.themeMode) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background,
+            ) {
+                AetherAppContent(
+                    viewModel = viewModel,
+                    uiState = uiState,
+                    strings = strings,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AetherAppContent(
+    viewModel: AetherViewModel,
+    uiState: AetherUiState,
+    strings: AetherStrings,
+) {
     val drawerState = rememberDrawerState(initialValue = androidx.compose.material3.DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val clipboardManager = LocalClipboardManager.current
     val workspaceFileBridge = remember(context) { WorkspaceFileBridge(context) }
-    val uiState = viewModel.uiState.collectAsStateWithLifecycle().value
     val activeSession = uiState.sessions.firstOrNull { it.id == uiState.currentSessionId }
     val activeProviderConfig = uiState.providerConfigs.firstOrNull { it.isActive }
     val currentSessionExecution = uiState.sessionExecutionStates[uiState.currentSessionId]
@@ -251,7 +277,7 @@ fun AetherApp(
                 }
                 Toast.makeText(
                     context,
-                    if (didSave) "File saved" else "Couldn't save file",
+                    if (didSave) strings.fileSaved else strings.couldNotSaveFile,
                     Toast.LENGTH_SHORT,
                 ).show()
             }
@@ -295,7 +321,7 @@ fun AetherApp(
             viewModel.refreshTermuxSetup()
             Toast.makeText(
                 context,
-                if (granted) "Termux access granted" else "Termux access not granted",
+                if (granted) strings.termuxAccessGranted else strings.termuxAccessNotGranted,
                 Toast.LENGTH_SHORT,
             ).show()
         },
@@ -481,7 +507,7 @@ fun AetherApp(
                     },
                     onCopyMessage = { message ->
                         clipboardManager.setText(AnnotatedString(message.text))
-                        Toast.makeText(context, "Reply copied", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, strings.replyCopied, Toast.LENGTH_SHORT).show()
                     },
                     onRequestTermuxPermission = {
                         termuxPermissionLauncher.launch(TermuxContract.RunCommandPermission)
@@ -509,6 +535,8 @@ fun AetherApp(
                     notifyOnTaskCompletion = uiState.settings.notifyOnTaskCompletion,
                     agentModeAuthorizationEnabled = uiState.settings.agentModeAuthorizationEnabled,
                     agentModeAuthorizationMethod = uiState.settings.agentModeAuthorizationMethod,
+                    language = uiState.settings.language,
+                    themeMode = uiState.settings.themeMode,
                     agentModeDisplayState = uiState.agentModeDisplayState,
                     providerConfigs = uiState.providerConfigs,
                     termuxSetupState = uiState.termuxSetupState,
@@ -516,6 +544,8 @@ fun AetherApp(
                     mcpServers = uiState.mcpServers,
                     isFetchingModels = uiState.isFetchingModels,
                     onSave = viewModel::saveSettings,
+                    onUpdateLanguage = viewModel::updateAppLanguage,
+                    onUpdateThemeMode = viewModel::updateAppThemeMode,
                     onUpsertProviderConfig = viewModel::upsertProviderConfig,
                     onRemoveProviderConfig = viewModel::removeProviderConfig,
                     onSetActiveProvider = viewModel::setActiveProvider,
@@ -822,6 +852,7 @@ private fun ChatTopBar(
     onMenu: () -> Unit,
     onNewChat: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -830,21 +861,22 @@ private fun ChatTopBar(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SurfaceIconButton(Icons.Rounded.Menu, "Menu", onMenu)
+        SurfaceIconButton(Icons.Rounded.Menu, strings.menu, onMenu)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            SurfaceIconButton(Icons.Rounded.Create, "New chat", onNewChat)
-            SurfaceIconButton(Icons.Rounded.MoreHoriz, "More", {})
+            SurfaceIconButton(Icons.Rounded.Create, strings.newChat, onNewChat)
+            SurfaceIconButton(Icons.Rounded.MoreHoriz, strings.more, {})
         }
     }
 }
 
 @Composable
 private fun EmptyChatState() {
+    val strings = rememberAetherStrings()
     val actions = listOf(
-        SuggestionAction(Icons.Rounded.Image, "Create image"),
-        SuggestionAction(Icons.Rounded.Lightbulb, "Brainstorm"),
-        SuggestionAction(Icons.Rounded.Visibility, "Analyze images"),
-        SuggestionAction(Icons.Rounded.AutoAwesome, "More"),
+        SuggestionAction(Icons.Rounded.Image, strings.createImage, Color(0xFF22C55E)),
+        SuggestionAction(Icons.Rounded.Lightbulb, strings.brainstorm, Color(0xFFFACC15)),
+        SuggestionAction(Icons.Rounded.Visibility, strings.analyzeImages, AetherPrimary),
+        SuggestionAction(Icons.Rounded.AutoAwesome, strings.more, AetherPrimary),
     )
 
     Column(
@@ -855,7 +887,7 @@ private fun EmptyChatState() {
         verticalArrangement = Arrangement.Center,
     ) {
         Text(
-            text = "What can I help with?",
+            text = strings.whatCanIHelpWith,
             style = MaterialTheme.typography.headlineMedium,
             color = AetherOnSurface,
         )
@@ -866,12 +898,12 @@ private fun EmptyChatState() {
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 actions.take(2).forEach { action ->
-                    SuggestionChip(Modifier.weight(1f), action.icon, action.label)
+                    SuggestionChip(Modifier.weight(1f), action)
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 actions.drop(2).forEach { action ->
-                    SuggestionChip(Modifier.weight(1f), action.icon, action.label)
+                    SuggestionChip(Modifier.weight(1f), action)
                 }
             }
         }
@@ -881,8 +913,7 @@ private fun EmptyChatState() {
 @Composable
 private fun SuggestionChip(
     modifier: Modifier = Modifier,
-    icon: ImageVector,
-    label: String,
+    action: SuggestionAction,
 ) {
     Row(
         modifier = modifier
@@ -893,16 +924,12 @@ private fun SuggestionChip(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Icon(
-            imageVector = icon,
+            imageVector = action.icon,
             contentDescription = null,
-            tint = when (label) {
-                "Create image" -> Color(0xFF22C55E)
-                "Brainstorm" -> Color(0xFFFACC15)
-                else -> AetherPrimary
-            },
+            tint = action.tint,
         )
         Text(
-            text = label,
+            text = action.label,
             style = MaterialTheme.typography.labelLarge,
             color = AetherOnSurface,
         )
@@ -950,6 +977,7 @@ private fun MessageBubble(message: ChatMessage) {
 
 @Composable
 private fun TypingIndicator() {
+    val strings = rememberAetherStrings()
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -961,7 +989,7 @@ private fun TypingIndicator() {
             strokeWidth = 2.dp,
         )
         Text(
-            text = "Aether is thinking...",
+            text = strings.aetherIsThinking,
             style = MaterialTheme.typography.bodyMedium,
             color = AetherOnSurfaceVariant,
         )
@@ -976,6 +1004,7 @@ private fun ComposerBar(
     hasMessages: Boolean,
     isSending: Boolean,
 ) {
+    val strings = rememberAetherStrings()
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -995,7 +1024,7 @@ private fun ComposerBar(
         ) {
             if (value.isEmpty()) {
                 Text(
-                    text = if (hasMessages) "Reply to Aether" else "Ask Aether",
+                    text = if (hasMessages) strings.replyToAether else strings.askAether,
                     color = AetherOnSurfaceVariant,
                     style = MaterialTheme.typography.bodyLarge,
                 )
@@ -1013,7 +1042,7 @@ private fun ComposerBar(
         IconButton(onClick = {}, enabled = !isSending) {
             Icon(
                 imageVector = Icons.Rounded.KeyboardVoice,
-                contentDescription = "Voice",
+                contentDescription = strings.voice,
                 tint = AetherOnSurfaceVariant,
             )
         }
@@ -1035,6 +1064,7 @@ private fun AppDrawer(
     onSessionSelected: (String) -> Unit,
     onSettingsSelected: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     ModalDrawerSheet(
         modifier = Modifier.width(312.dp),
         drawerContainerColor = AetherSurface,
@@ -1053,18 +1083,18 @@ private fun AppDrawer(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 SearchBarStub(modifier = Modifier.weight(1f))
-                SurfaceIconButton(Icons.Rounded.Create, "New chat", onNewChat)
+                SurfaceIconButton(Icons.Rounded.Create, strings.newChat, onNewChat)
             }
 
             Spacer(modifier = Modifier.height(14.dp))
-            DrawerPrimaryAction(Icons.Rounded.Create, "New chat", onNewChat)
-            DrawerPrimaryAction(Icons.Rounded.Image, "Images", {})
-            DrawerPrimaryAction(Icons.Rounded.GridView, "Apps", {})
-            DrawerPrimaryAction(Icons.Rounded.AutoAwesome, "GPTs", {})
+            DrawerPrimaryAction(Icons.Rounded.Create, strings.newChat, onNewChat)
+            DrawerPrimaryAction(Icons.Rounded.Image, strings.images, {})
+            DrawerPrimaryAction(Icons.Rounded.GridView, strings.apps, {})
+            DrawerPrimaryAction(Icons.Rounded.AutoAwesome, strings.gpts, {})
 
             Spacer(modifier = Modifier.height(18.dp))
             Text(
-                text = "Recent",
+                text = strings.recent,
                 style = MaterialTheme.typography.labelLarge,
                 color = AetherOnSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 8.dp),
@@ -1072,7 +1102,7 @@ private fun AppDrawer(
             Spacer(modifier = Modifier.height(10.dp))
             if (sessions.isEmpty()) {
                 Text(
-                    text = "No conversations yet.",
+                    text = strings.noConversationsYet,
                     style = MaterialTheme.typography.bodyMedium,
                     color = AetherOnSurfaceVariant,
                     modifier = Modifier
@@ -1096,7 +1126,7 @@ private fun AppDrawer(
 
             Spacer(modifier = Modifier.height(4.dp))
             Spacer(modifier = Modifier.height(12.dp))
-            DrawerPrimaryAction(Icons.Rounded.Settings, "Settings", onSettingsSelected)
+            DrawerPrimaryAction(Icons.Rounded.Settings, strings.settings, onSettingsSelected)
             Spacer(modifier = Modifier.height(8.dp))
         }
     }
@@ -1104,6 +1134,7 @@ private fun AppDrawer(
 
 @Composable
 private fun SearchBarStub(modifier: Modifier = Modifier) {
+    val strings = rememberAetherStrings()
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(22.dp))
@@ -1118,7 +1149,7 @@ private fun SearchBarStub(modifier: Modifier = Modifier) {
             tint = AetherOnSurfaceVariant,
         )
         Text(
-            text = "Search",
+            text = strings.search,
             style = MaterialTheme.typography.bodyMedium,
             color = AetherOnSurfaceVariant,
         )
@@ -1155,6 +1186,7 @@ private fun SessionRow(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1172,7 +1204,7 @@ private fun SessionRow(
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = session.preview.ifBlank { "Empty draft" },
+            text = session.preview.ifBlank { strings.emptyDraft },
             style = MaterialTheme.typography.bodySmall,
             color = AetherOnSurfaceVariant,
             maxLines = 1,
@@ -1194,7 +1226,7 @@ private fun SurfaceIconButton(
             .size(44.dp)
             .shadow(12.dp, CircleShape, ambientColor = AetherScrim, spotColor = AetherScrim)
             .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.88f))
+            .background(AetherSurface.copy(alpha = 0.88f))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -1233,16 +1265,18 @@ private fun CircleAction(
 @Preview(showBackground = true, backgroundColor = 0xFF000000)
 @Composable
 private fun AetherAppPreview() {
-    AetherTheme {
-        ChatScreen(
-            messages = defaultPreviewMessages(),
-            inputValue = "",
-            onInputChanged = {},
-            onSend = {},
-            onMenu = {},
-            onNewChat = {},
-            isSending = false,
-        )
+    AetherLocalization(language = com.zhousl.aether.data.AppLanguage.English) {
+        AetherTheme {
+            ChatScreen(
+                messages = defaultPreviewMessages(),
+                inputValue = "",
+                onInputChanged = {},
+                onSend = {},
+                onMenu = {},
+                onNewChat = {},
+                isSending = false,
+            )
+        }
     }
 }
 

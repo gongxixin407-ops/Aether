@@ -122,6 +122,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.zhousl.aether.data.InstalledSkill
+import com.zhousl.aether.data.AppLanguage
 import com.zhousl.aether.data.AgentModeDisplayState
 import com.zhousl.aether.data.McpServerConfig
 import com.zhousl.aether.data.McpTransportConfig
@@ -131,12 +132,15 @@ import com.zhousl.aether.data.SessionFollowUpMode
 import com.zhousl.aether.data.quickActionLabel
 import com.zhousl.aether.termux.TermuxSetupState
 import com.zhousl.aether.ui.theme.AetherBackground
+import com.zhousl.aether.ui.theme.AetherBackgroundGradientTop
 import com.zhousl.aether.ui.theme.AetherOnSurface
+import com.zhousl.aether.ui.theme.AetherOnPrimary
 import com.zhousl.aether.ui.theme.AetherOnSurfaceVariant
 import com.zhousl.aether.ui.theme.AetherPrimary
 import com.zhousl.aether.ui.theme.AetherScrim
 import com.zhousl.aether.ui.theme.AetherSurface
 import com.zhousl.aether.ui.theme.AetherSurfaceHigh
+import com.zhousl.aether.ui.theme.AetherSurfaceHigher
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.delay
@@ -146,7 +150,6 @@ private val ConversationTopFadeHeight = 42.dp
 private val DrawerOverlayFadeHeight = 18.dp
 private val ComposerCardShape = RoundedCornerShape(26.dp)
 private val ComposerFocusedCardShape = RoundedCornerShape(28.dp)
-private val ChatGptBackground = Color(0xFFFCFCFC)
 private val ChatGptControlShadow = Color(0x14000000)
 private val ChatGptComposerShadow = Color(0x18000000)
 private val ChatGptPurple = Color(0xFF9B5CFF)
@@ -154,36 +157,36 @@ private val ChatGptMotionEasing = CubicBezierEasing(0.22f, 0.84f, 0.18f, 1f)
 
 private fun topOverlayBodyGradient(): Brush = Brush.verticalGradient(
     colorStops = arrayOf(
-        0.0f to Color.White.copy(alpha = 0.98f),
-        0.28f to Color.White.copy(alpha = 0.92f),
-        0.58f to Color.White.copy(alpha = 0.52f),
-        0.82f to Color.White.copy(alpha = 0.18f),
+        0.0f to AetherBackground.copy(alpha = 0.98f),
+        0.28f to AetherBackground.copy(alpha = 0.92f),
+        0.58f to AetherBackground.copy(alpha = 0.52f),
+        0.82f to AetherBackground.copy(alpha = 0.18f),
         1.0f to Color.Transparent,
     )
 )
 
 private fun topOverlayTailGradient(): Brush = Brush.verticalGradient(
     colorStops = arrayOf(
-        0.0f to Color.White.copy(alpha = 0.10f),
-        0.42f to Color.White.copy(alpha = 0.04f),
+        0.0f to AetherBackground.copy(alpha = 0.10f),
+        0.42f to AetherBackground.copy(alpha = 0.04f),
         1.0f to Color.Transparent,
     )
 )
 
 private fun drawerOverlayBodyGradient(): Brush = Brush.verticalGradient(
     colorStops = arrayOf(
-        0.0f to Color.White.copy(alpha = 0.94f),
-        0.20f to Color.White.copy(alpha = 0.86f),
-        0.48f to Color.White.copy(alpha = 0.54f),
-        0.78f to Color.White.copy(alpha = 0.18f),
+        0.0f to AetherSurface.copy(alpha = 0.94f),
+        0.20f to AetherSurface.copy(alpha = 0.86f),
+        0.48f to AetherSurface.copy(alpha = 0.54f),
+        0.78f to AetherSurface.copy(alpha = 0.18f),
         1.0f to Color.Transparent,
     )
 )
 
 private fun drawerOverlayTailGradient(): Brush = Brush.verticalGradient(
     colorStops = arrayOf(
-        0.0f to Color.White.copy(alpha = 0.18f),
-        0.46f to Color.White.copy(alpha = 0.06f),
+        0.0f to AetherSurface.copy(alpha = 0.18f),
+        0.46f to AetherSurface.copy(alpha = 0.06f),
         1.0f to Color.Transparent,
     )
 )
@@ -311,7 +314,7 @@ fun ConversationScreen(
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
-        containerColor = ChatGptBackground,
+        containerColor = AetherBackground,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { innerPadding ->
         Box(
@@ -319,7 +322,7 @@ fun ConversationScreen(
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        listOf(Color.White, ChatGptBackground, Color.White)
+                        listOf(AetherBackgroundGradientTop, AetherBackground, AetherSurface)
                     )
                 )
                 .padding(innerPadding)
@@ -523,6 +526,7 @@ private fun ConversationTopBar(
     onMenu: () -> Unit,
     onNewChat: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -533,17 +537,17 @@ private fun ConversationTopBar(
     ) {
         HeaderCircleButton(
             icon = Icons.Rounded.Menu,
-            contentDescription = "Menu",
+            contentDescription = strings.menu,
             onClick = onMenu,
             size = 44.dp,
-            containerColor = Color.White.copy(alpha = 0.96f),
+            containerColor = AetherSurface.copy(alpha = 0.96f),
         )
         HeaderCircleButton(
             icon = LucideIcons.SquarePen,
-            contentDescription = "New chat",
+            contentDescription = strings.newChat,
             onClick = onNewChat,
             size = 44.dp,
-            containerColor = Color.White.copy(alpha = 0.96f),
+            containerColor = AetherSurface.copy(alpha = 0.96f),
         )
     }
 }
@@ -556,6 +560,7 @@ private fun ConversationEmptyState(
     onResumeOnboarding: () -> Unit,
     onStarterPromptSelected: (String) -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     val titleOffset by animateDpAsState(
         targetValue = if (inputFocused) (-34).dp else (-24).dp,
         animationSpec = tween(durationMillis = 260, easing = ChatGptMotionEasing),
@@ -574,7 +579,7 @@ private fun ConversationEmptyState(
             Spacer(modifier = Modifier.height(22.dp))
         }
         Text(
-            text = "What can I help with?",
+            text = strings.whatCanIHelpWith,
             style = MaterialTheme.typography.titleLarge.copy(
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 24.sp,
@@ -591,13 +596,13 @@ private fun ConversationEmptyState(
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 EmptyStateChip(
                     icon = Icons.Rounded.Image,
-                    label = "Analyze image",
+                    label = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "分析图片" else "Analyze image",
                     iconTint = Color(0xFF38A961),
                     onClick = { onStarterPromptSelected("Analyze this image and describe the important details.") },
                 )
                 EmptyStateChip(
                     icon = Icons.Rounded.Terminal,
-                    label = "Code",
+                    label = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "代码" else "Code",
                     iconTint = Color(0xFF7D70DD),
                     onClick = { onStarterPromptSelected("Help me write or debug this code: ") },
                 )
@@ -605,13 +610,13 @@ private fun ConversationEmptyState(
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 EmptyStateChip(
                     icon = Icons.Rounded.AutoAwesome,
-                    label = "Help me write",
+                    label = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "帮我写" else "Help me write",
                     iconTint = Color(0xFFE48AAE),
                     onClick = { onStarterPromptSelected("Help me write a clear, polished message about ") },
                 )
                 EmptyStateChip(
                     icon = Icons.Rounded.AttachFile,
-                    label = "Summarize file",
+                    label = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "总结文件" else "Summarize file",
                     iconTint = Color(0xFF66C7D4),
                     onClick = { onStarterPromptSelected("Summarize this file and list the key points.") },
                 )
@@ -627,11 +632,12 @@ private fun EmptyStateChip(
     iconTint: Color,
     onClick: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     Row(
         modifier = Modifier
             .shadow(6.dp, RoundedCornerShape(999.dp), ambientColor = ChatGptControlShadow, spotColor = ChatGptControlShadow)
             .clip(RoundedCornerShape(999.dp))
-            .background(Color.White.copy(alpha = 0.98f))
+            .background(AetherSurface.copy(alpha = 0.98f))
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -655,22 +661,23 @@ private fun EmptyStateChip(
 private fun ResumeSetupCard(
     onResumeOnboarding: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .shadow(12.dp, RoundedCornerShape(24.dp), ambientColor = AetherScrim, spotColor = AetherScrim)
             .clip(RoundedCornerShape(24.dp))
-            .background(Color.White.copy(alpha = 0.96f))
+            .background(AetherSurface.copy(alpha = 0.96f))
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
-            text = "Finish setup",
+            text = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "完成设置" else "Finish setup",
             style = MaterialTheme.typography.titleMedium,
             color = AetherOnSurface,
         )
         Text(
-            text = "Connect a model, then come back to chat.",
+            text = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "连接模型后返回聊天。" else "Connect a model, then come back to chat.",
             style = MaterialTheme.typography.bodySmall,
             color = AetherOnSurfaceVariant,
         )
@@ -679,18 +686,19 @@ private fun ResumeSetupCard(
             shape = RoundedCornerShape(16.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = AetherPrimary,
-                contentColor = Color.White,
+                contentColor = AetherOnPrimary,
             ),
         ) {
-            Text("Resume setup")
+            Text(if (strings.appLanguage == AppLanguage.SimplifiedChinese) "继续设置" else "Resume setup")
         }
     }
 }
 
 @Composable
 private fun ConversationThinkingIndicator() {
+    val strings = rememberAetherStrings()
     ShimmerStatusText(
-        text = "Thinking",
+        text = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "思考中" else "Thinking",
         modifier = Modifier.padding(top = 6.dp),
     )
 }
@@ -699,14 +707,14 @@ private fun ConversationThinkingIndicator() {
 private fun PendingSessionInputBubble(
     pendingInput: PendingSessionInput,
 ) {
+    val strings = rememberAetherStrings()
     val modeLabel = when (pendingInput.mode) {
-        SessionFollowUpMode.Queue -> "Queued"
-        SessionFollowUpMode.Steer -> "Steering"
+        SessionFollowUpMode.Queue -> strings.pendingInputModeLabel(true)
+        SessionFollowUpMode.Steer -> strings.pendingInputModeLabel(false)
     }
     val attachmentLabel = when (pendingInput.attachmentCount) {
         0 -> null
-        1 -> "1 attachment"
-        else -> "${pendingInput.attachmentCount} attachments"
+        else -> strings.attachmentCountLabel(pendingInput.attachmentCount)
     }
 
     Column(
@@ -742,7 +750,9 @@ private fun PendingSessionInputBubble(
                 }
             }
             Text(
-                text = pendingInput.preview.ifBlank { "Additional context" },
+                text = pendingInput.preview.ifBlank {
+                    if (strings.appLanguage == AppLanguage.SimplifiedChinese) "补充上下文" else "Additional context"
+                },
                 style = MaterialTheme.typography.bodyLarge,
                 color = AetherOnSurface,
             )
@@ -883,6 +893,7 @@ private fun ConversationComposerBar(
     onQueueFollowUp: () -> Unit,
     onSteerFollowUp: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     var attachmentMenuExpanded by remember { mutableStateOf(false) }
     val attachmentMenuVisibility = remember { MutableTransitionState(false) }
     attachmentMenuVisibility.targetState = attachmentMenuExpanded
@@ -905,15 +916,16 @@ private fun ConversationComposerBar(
     val hasSelectedActions = selectedSkillActions.isNotEmpty() || selectedMcpActions.isNotEmpty() || agentModeSelected
     val composerPlaceholder = when {
         value.isNotBlank() -> ""
-        attachments.isNotEmpty() -> "Add a note"
-        agentModeSelected && selectedSkillActions.isEmpty() && selectedMcpActions.isEmpty() -> "Ask Agent Mode"
+        attachments.isNotEmpty() -> if (strings.appLanguage == AppLanguage.SimplifiedChinese) "添加备注" else "Add a note"
+        agentModeSelected && selectedSkillActions.isEmpty() && selectedMcpActions.isEmpty() ->
+            if (strings.appLanguage == AppLanguage.SimplifiedChinese) "询问 Agent 模式" else "Ask Agent Mode"
         selectedSkillActions.size + selectedMcpActions.size == 1 && !agentModeSelected -> {
             selectedSkillActions.firstOrNull()?.quickActionLabel()
                 ?: selectedMcpActions.firstOrNull()?.quickActionLabel()
-                ?: "Reply to Aether"
+                ?: strings.replyToAether
         }
-        hasSelectedActions -> "Ask with selected tools"
-        else -> "Ask Aether"
+        hasSelectedActions -> if (strings.appLanguage == AppLanguage.SimplifiedChinese) "使用所选工具提问" else "Ask with selected tools"
+        else -> strings.askAether
     }
     val hasDraft = value.isNotBlank() || attachments.isNotEmpty()
     val canSendDraft = attachments.all { it.workspaceState == AttachmentWorkspaceState.Ready }
@@ -1007,18 +1019,18 @@ private fun ConversationComposerBar(
         }
         if (showStarterPromptHint) {
             SurfaceNotice(
-                title = "Your first prompt is ready",
-                subtitle = "Tap send to test Aether.",
-                actionLabel = "Hide",
+                title = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "你的第一条提示已准备好" else "Your first prompt is ready",
+                subtitle = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "点击发送来测试 Aether。" else "Tap send to test Aether.",
+                actionLabel = strings.hide,
                 onAction = onDismissStarterPromptHint,
                 actionEnabled = true,
             )
         }
         if (isEditing) {
             SurfaceNotice(
-                title = "Editing earlier message",
-                subtitle = "Sending will replace the replies that came after it.",
-                actionLabel = "Cancel",
+                title = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "正在编辑较早的消息" else "Editing earlier message",
+                subtitle = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "发送后会替换它之后的回复。" else "Sending will replace the replies that came after it.",
+                actionLabel = strings.cancel,
                 onAction = onCancelEdit,
                 actionEnabled = true,
             )
@@ -1062,7 +1074,7 @@ private fun ConversationComposerBar(
                             animationSpec = tween(durationMillis = 320, easing = ChatGptMotionEasing),
                         )
                         .clip(fieldShape)
-                        .background(Color.White)
+                        .background(AetherSurface)
                         .padding(
                             start = fieldContentStartPadding,
                             end = 8.dp,
@@ -1201,12 +1213,12 @@ private fun ConversationComposerBar(
                                                     .widthIn(min = 252.dp, max = 284.dp)
                                                     .shadow(20.dp, RoundedCornerShape(30.dp), ambientColor = AetherScrim, spotColor = AetherScrim)
                                                     .clip(RoundedCornerShape(30.dp))
-                                                    .background(Color.White)
+                                                    .background(AetherSurface)
                                                     .padding(horizontal = 12.dp, vertical = 12.dp),
                                                 verticalArrangement = Arrangement.spacedBy(2.dp),
                                             ) {
                                                 ComposerPlusMenuRow(
-                                                    title = "Steer current run",
+                                                    title = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "引导当前运行" else "Steer current run",
                                                     icon = Icons.Rounded.AutoAwesome,
                                                     iconTint = Color(0xFF8D6C2F),
                                                     iconContainerColor = Color(0xFFFFF3DE),
@@ -1216,7 +1228,7 @@ private fun ConversationComposerBar(
                                                     },
                                                 )
                                                 ComposerPlusMenuRow(
-                                                    title = "Queue next turn",
+                                                    title = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "排队下一轮" else "Queue next turn",
                                                     icon = Icons.Rounded.ArrowUpward,
                                                     iconTint = Color(0xFF2F6DA3),
                                                     iconContainerColor = Color(0xFFEAF2FF),
@@ -1235,19 +1247,19 @@ private fun ConversationComposerBar(
                 }
             }
 
-            Box(
-                modifier = Modifier
-                    .align(plusButtonAlignment)
-                    .size(48.dp)
+                Box(
+            modifier = Modifier
+                .align(plusButtonAlignment)
+                .size(48.dp)
                     .shadow(plusShadowElevation, CircleShape, ambientColor = ChatGptControlShadow, spotColor = ChatGptControlShadow)
                     .clip(CircleShape)
-                    .background(if (plusSeparated) Color.White else Color.Transparent)
+                    .background(if (plusSeparated) AetherSurface else Color.Transparent)
                     .clickable(onClick = { attachmentMenuExpanded = !attachmentMenuExpanded }),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = Icons.Rounded.Add,
-                    contentDescription = "Add attachment or tool",
+                    contentDescription = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "添加附件或工具" else "Add attachment or tool",
                     tint = AetherOnSurface,
                     modifier = Modifier.size(27.dp),
                 )
@@ -1284,25 +1296,25 @@ private fun ConversationComposerBar(
                                     .widthIn(min = 284.dp, max = 304.dp)
                                     .shadow(20.dp, RoundedCornerShape(30.dp), ambientColor = AetherScrim, spotColor = AetherScrim)
                                     .clip(RoundedCornerShape(30.dp))
-                                    .background(Color.White)
+                                    .background(AetherSurface)
                                     .padding(horizontal = 12.dp, vertical = 12.dp),
                                 verticalArrangement = Arrangement.spacedBy(2.dp),
                             ) {
                                 ComposerPlusMenuRow(
-                                    title = "Photos",
+                                    title = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "照片" else "Photos",
                                     icon = Icons.Rounded.Image,
                                     iconTint = Color(0xFF4E8D5A),
-                                    iconContainerColor = Color(0xFFE7F6EC),
+                                    iconContainerColor = AetherSurfaceHigh,
                                     onClick = {
                                         attachmentMenuExpanded = false
                                         onPickImages()
                                     },
                                 )
                                 ComposerPlusMenuRow(
-                                    title = "Files",
+                                    title = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "文件" else "Files",
                                     icon = Icons.Rounded.AttachFile,
                                     iconTint = AetherOnSurface,
-                                    iconContainerColor = Color(0xFFF3F4F6),
+                                    iconContainerColor = AetherSurfaceHigh,
                                     onClick = {
                                         attachmentMenuExpanded = false
                                         onPickFiles()
@@ -1313,11 +1325,11 @@ private fun ConversationComposerBar(
                                 }
                                 if (agentModeAvailable) {
                                     ComposerPlusMenuRow(
-                                        title = "Agent Mode",
+                                        title = strings.agentMode,
                                         icon = LucideIcons.MousePointer2,
                                         selected = agentModeSelected,
                                         iconTint = Color(0xFF6D5CFF),
-                                        iconContainerColor = Color(0xFFEDEBFF),
+                                        iconContainerColor = AetherSurfaceHigh,
                                         onClick = {
                                             attachmentMenuExpanded = false
                                             onSetAgentModeSelected(!agentModeSelected)
@@ -1331,7 +1343,7 @@ private fun ConversationComposerBar(
                                         icon = Icons.Rounded.Extension,
                                         selected = selected,
                                         iconTint = Color(0xFF9C6B2F),
-                                        iconContainerColor = Color(0xFFFFF4E7),
+                                        iconContainerColor = AetherSurfaceHigh,
                                         onClick = {
                                             attachmentMenuExpanded = false
                                             onSetSkillSelected(skill.id, !selected)
@@ -1346,7 +1358,7 @@ private fun ConversationComposerBar(
                                         icon = if (isStdIo) Icons.Rounded.Terminal else Icons.Rounded.Cloud,
                                         selected = selected,
                                         iconTint = if (isStdIo) Color(0xFF2F6DA3) else Color(0xFF2A9C9A),
-                                        iconContainerColor = if (isStdIo) Color(0xFFEAF2FF) else Color(0xFFE8F8F7),
+                                        iconContainerColor = AetherSurfaceHigh,
                                         onClick = {
                                             attachmentMenuExpanded = false
                                             onSetMcpServerSelected(server.id, !selected)
@@ -1391,11 +1403,12 @@ private fun ComposerSubmitButton(
     isSending: Boolean,
     onClick: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     val enabled = hasDraft && canSendDraft
     val buttonColor = if (enabled) {
         ChatGptPurple
     } else {
-        Color(0xFFD3D3D3)
+        AetherSurfaceHigher
     }
     Box(
         modifier = Modifier
@@ -1410,7 +1423,11 @@ private fun ComposerSubmitButton(
     ) {
         Icon(
             imageVector = Icons.Rounded.ArrowUpward,
-            contentDescription = if (isSending) "Send follow-up" else "Send",
+            contentDescription = if (isSending) {
+                if (strings.appLanguage == AppLanguage.SimplifiedChinese) "发送跟进" else "Send follow-up"
+            } else {
+                strings.send
+            },
             tint = Color.White,
             modifier = Modifier.size(21.dp),
         )
@@ -1427,6 +1444,7 @@ private fun ComposerActionTray(
     onRemoveMcpServer: (String) -> Unit,
     onRemoveAgentMode: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -1436,7 +1454,7 @@ private fun ComposerActionTray(
     ) {
         if (agentModeSelected) {
             ComposerActionChip(
-                label = "Agent Mode",
+                label = strings.agentMode,
                 icon = LucideIcons.MousePointer2,
                 onRemove = onRemoveAgentMode,
             )
@@ -1467,6 +1485,7 @@ private fun AgentModePreviewPanel(
     displayState: AgentModeDisplayState,
     toolInvocation: ChatToolInvocation?,
 ) {
+    val strings = rememberAetherStrings()
     val bitmap = remember(displayState.latestPreviewPath, displayState.lastUpdatedMillis) {
         displayState.latestPreviewPath
             .takeIf { it.isNotBlank() }
@@ -1477,7 +1496,7 @@ private fun AgentModePreviewPanel(
             .fillMaxWidth()
             .shadow(12.dp, RoundedCornerShape(24.dp), ambientColor = AetherScrim, spotColor = AetherScrim)
             .clip(RoundedCornerShape(24.dp))
-            .background(Color.White)
+            .background(AetherSurface)
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -1497,7 +1516,7 @@ private fun AgentModePreviewPanel(
             ) {
                 Image(
                     bitmap = bitmap.asImageBitmap(),
-                    contentDescription = "Agent Mode virtual display",
+                    contentDescription = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "Agent 模式虚拟显示" else "Agent Mode virtual display",
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(10.dp)
@@ -1507,7 +1526,7 @@ private fun AgentModePreviewPanel(
             }
         } else {
             Text(
-                text = "Virtual display preview will appear after the agent starts.",
+                text = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "代理启动后会显示虚拟屏幕预览。" else "Virtual display preview will appear after the agent starts.",
                 style = MaterialTheme.typography.bodySmall,
                 color = AetherOnSurfaceVariant,
             )
@@ -1519,6 +1538,7 @@ private fun AgentModePreviewPanel(
 private fun AgentModePreviewHeader(
     displayState: AgentModeDisplayState,
 ) {
+    val strings = rememberAetherStrings()
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -1531,13 +1551,15 @@ private fun AgentModePreviewHeader(
             modifier = Modifier.size(16.dp),
         )
         Text(
-            text = "Agent Mode",
+            text = strings.agentMode,
             style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Medium),
             color = AetherOnSurface,
         )
         Spacer(modifier = Modifier.weight(1f))
         Text(
-            text = displayState.displayId?.let { "display $it" } ?: "standby",
+            text = displayState.displayId?.let {
+                if (strings.appLanguage == AppLanguage.SimplifiedChinese) "显示 $it" else "display $it"
+            } ?: if (strings.appLanguage == AppLanguage.SimplifiedChinese) "待机" else "standby",
             style = MaterialTheme.typography.labelSmall,
             color = AetherOnSurfaceVariant,
         )
@@ -1553,7 +1575,7 @@ private fun AgentModePreviewToolStatus(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
-            .background(Color(0xFFF6F7FB))
+            .background(AetherSurfaceHigh)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1588,30 +1610,15 @@ private fun AgentModePreviewToolStatus(
     }
 }
 
+@Composable
 private fun formatPendingAgentModeToolLabel(toolInvocation: ChatToolInvocation): String {
+    val strings = rememberAetherStrings()
     val arguments = parseJsonObject(toolInvocation.argumentsJson)
-    return when (toolInvocation.toolName.lowercase()) {
-        "agent_display" -> {
-            val action = arguments?.optString("action").orEmpty().lowercase()
-            when (action) {
-                "start" -> if (toolInvocation.isRunning) "Starting Agent Mode display" else "Started Agent Mode display"
-                "launch" -> {
-                    val target = arguments?.optString("target").orEmpty().trim()
-                    if (toolInvocation.isRunning) "Opening ${target.ifBlank { "app" }}" else "Opened ${target.ifBlank { "app" }}"
-                }
-                "tap" -> if (toolInvocation.isRunning) "Tapping screen" else "Tapped screen"
-                "swipe" -> if (toolInvocation.isRunning) "Swiping screen" else "Swiped screen"
-                "key" -> if (toolInvocation.isRunning) "Pressing ${arguments?.optString("key").orEmpty().ifBlank { "key" }}" else "Pressed ${arguments?.optString("key").orEmpty().ifBlank { "key" }}"
-                "text" -> if (toolInvocation.isRunning) "Typing text" else "Typed text"
-                "screenshot" -> if (toolInvocation.isRunning) "Capturing screen" else "Captured screen"
-                "stop" -> if (toolInvocation.isRunning) "Stopping Agent Mode" else "Stopped Agent Mode"
-                else -> if (toolInvocation.isRunning) "Using Agent Mode" else "Used Agent Mode"
-            }
-        }
-        "analyze_image" -> if (toolInvocation.isRunning) "Reading screen" else "Read screen"
-        "bash" -> if (toolInvocation.isRunning) "Running command" else "Ran command"
-        else -> if (toolInvocation.isRunning) "Using ${toolInvocation.toolName}" else "Used ${toolInvocation.toolName}"
-    }
+    return strings.toolInvocationTitleLabel(
+        toolName = toolInvocation.toolName,
+        isRunning = toolInvocation.isRunning,
+        arguments = arguments,
+    )
 }
 
 private fun parseJsonObject(rawValue: String): JSONObject? =
@@ -1744,6 +1751,7 @@ fun ConversationDrawer(
     onDeleteSession: (String) -> Unit,
     onSettingsSelected: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     var searchExpanded by rememberSaveable { mutableStateOf(false) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var overlayHeightPx by remember { mutableIntStateOf(0) }
@@ -1764,7 +1772,7 @@ fun ConversationDrawer(
         modifier = Modifier
             .fillMaxHeight()
             .widthIn(min = 304.dp, max = 328.dp),
-        drawerContainerColor = Color(0xFFFDFCFA),
+        drawerContainerColor = AetherSurface,
         drawerShape = RoundedCornerShape(topEnd = 30.dp, bottomEnd = 30.dp),
     ) {
         Box(
@@ -1784,7 +1792,7 @@ fun ConversationDrawer(
                         )
                 ) {
                     Text(
-                        text = if (sessions.isEmpty()) "No conversations yet." else "No chats match \"$searchQuery\".",
+                        text = if (sessions.isEmpty()) strings.noConversationsYet else strings.noChatsMatchSummary(searchQuery),
                         style = MaterialTheme.typography.bodyMedium,
                         color = AetherOnSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
@@ -1850,7 +1858,7 @@ fun ConversationDrawer(
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             HeaderCircleButton(
                                 icon = LucideIcons.Search,
-                                contentDescription = "Search chats",
+                                contentDescription = strings.search,
                                 onClick = {
                                     if (searchExpanded || searchQuery.isNotBlank()) {
                                         searchExpanded = false
@@ -1860,18 +1868,18 @@ fun ConversationDrawer(
                                     }
                                 },
                                 size = 46.dp,
-                                containerColor = Color.White.copy(alpha = 0.90f),
+                                containerColor = AetherSurface.copy(alpha = 0.90f),
                             )
                             HeaderCircleButton(
                                 icon = LucideIcons.Settings,
-                                contentDescription = "Settings",
+                                contentDescription = strings.settings,
                                 onClick = {
                                     searchExpanded = false
                                     searchQuery = ""
                                     onSettingsSelected()
                                 },
                                 size = 46.dp,
-                                containerColor = Color.White.copy(alpha = 0.90f),
+                                containerColor = AetherSurface.copy(alpha = 0.90f),
                             )
                         }
                     }
@@ -1924,11 +1932,12 @@ private fun DrawerCompactSearchField(
     onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val strings = rememberAetherStrings()
     Row(
         modifier = modifier
             .shadow(12.dp, RoundedCornerShape(24.dp), ambientColor = AetherScrim, spotColor = AetherScrim)
             .clip(RoundedCornerShape(24.dp))
-            .background(Color.White)
+            .background(AetherSurface)
             .padding(horizontal = 14.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1945,7 +1954,7 @@ private fun DrawerCompactSearchField(
         ) {
             if (value.isBlank()) {
                 Text(
-                    text = "Search chats",
+                    text = strings.search,
                     style = MaterialTheme.typography.bodyMedium,
                     color = AetherOnSurfaceVariant,
                 )
@@ -1974,11 +1983,12 @@ private fun DrawerSessionRow(
     onExport: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     var menuExpanded by remember { mutableStateOf(false) }
     var isRenaming by remember { mutableStateOf(false) }
     var renameFieldHadFocus by remember { mutableStateOf(false) }
     var renameFocusRequest by remember { mutableIntStateOf(0) }
-    var titleValue by remember(session.id, session.title) { mutableStateOf(session.title.ifBlank { "New chat" }) }
+    var titleValue by remember(session.id, session.title) { mutableStateOf(session.title.ifBlank { strings.newChat }) }
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -2006,7 +2016,7 @@ private fun DrawerSessionRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(18.dp))
-                .background(if (selected) Color(0xFFF1F0EC) else Color.Transparent)
+                .background(if (selected) AetherSurfaceHigh else Color.Transparent)
                 .then(
                     if (isRenaming) {
                         Modifier
@@ -2047,7 +2057,7 @@ private fun DrawerSessionRow(
                 )
             } else {
                 Text(
-                    text = session.title.ifBlank { "New chat" },
+                    text = session.title.ifBlank { strings.newChat },
                     style = MaterialTheme.typography.bodyLarge.copy(
                         fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
                     ),
@@ -2079,7 +2089,7 @@ private fun DrawerSessionRow(
             onDismissRequest = { menuExpanded = false },
             onRename = {
                 menuExpanded = false
-                titleValue = session.title.ifBlank { "New chat" }
+                titleValue = session.title.ifBlank { strings.newChat }
                 renameFieldHadFocus = false
                 isRenaming = true
                 renameFocusRequest += 1
@@ -2104,6 +2114,7 @@ private fun DrawerSessionActionMenu(
     onExport: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     val menuVisibility = remember { MutableTransitionState(false) }
     menuVisibility.targetState = expanded
     if (!menuVisibility.currentState && !menuVisibility.targetState) return
@@ -2128,13 +2139,13 @@ private fun DrawerSessionActionMenu(
                     .widthIn(min = 188.dp, max = 220.dp)
                     .shadow(18.dp, RoundedCornerShape(24.dp), ambientColor = AetherScrim, spotColor = AetherScrim)
                     .clip(RoundedCornerShape(24.dp))
-                    .background(Color.White)
+                    .background(AetherSurface)
                     .padding(8.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                DrawerSessionActionRow("Rename", onRename)
-                DrawerSessionActionRow("Export", onExport)
-                DrawerSessionActionRow("Delete", onDelete, destructive = true)
+                DrawerSessionActionRow(strings.rename, onRename)
+                DrawerSessionActionRow(strings.export, onExport)
+                DrawerSessionActionRow(strings.delete, onDelete, destructive = true)
             }
         }
     }
@@ -2184,6 +2195,7 @@ private fun DrawerFloatingChatButton(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     Row(
         modifier = modifier
             .shadow(18.dp, RoundedCornerShape(999.dp), ambientColor = AetherScrim, spotColor = AetherScrim)
@@ -2205,7 +2217,7 @@ private fun DrawerFloatingChatButton(
             modifier = Modifier.size(17.dp),
         )
         Text(
-            text = "Chat",
+            text = strings.chat,
             style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Medium),
             color = Color.White,
         )

@@ -76,11 +76,22 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.zhousl.aether.data.AgentModeAuthorizationMethod
+import com.zhousl.aether.data.AppLanguage
 import com.zhousl.aether.data.LlmProvider
 import com.zhousl.aether.data.LlmProviderConfig
 import com.zhousl.aether.termux.TermuxSetupIssue
 import com.zhousl.aether.termux.TermuxSetupState
 import com.zhousl.aether.R
+import com.zhousl.aether.ui.theme.AetherBackground
+import com.zhousl.aether.ui.theme.AetherOnPrimary
+import com.zhousl.aether.ui.theme.AetherOnSurface
+import com.zhousl.aether.ui.theme.AetherOnSurfaceVariant
+import com.zhousl.aether.ui.theme.AetherOutlineSoft
+import com.zhousl.aether.ui.theme.AetherPrimary
+import com.zhousl.aether.ui.theme.AetherSecondary
+import com.zhousl.aether.ui.theme.AetherSurface
+import com.zhousl.aether.ui.theme.AetherSurfaceHigh
+import com.zhousl.aether.ui.theme.AetherTertiary
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -101,17 +112,31 @@ private val FollowUpOnboardingSteps = listOf(
     OnboardingStep.McpOverview,
 )
 
-private val TourBackground = Color.White
-private val TourTextPrimary = Color(0xFF111111)
-private val TourTextSecondary = Color(0xFF6A6A66)
-private val TourTextTertiary = Color(0xFF8A8A84)
-private val TourDivider = Color(0xFFE8E8E3)
-private val TourSurface = Color(0xFFF6F6F2)
-private val TourButton = Color(0xFF171717)
-private val TourBlue = Color(0xFF3C6FE4)
-private val TourGreen = Color(0xFF297A68)
-private val TourGold = Color(0xFFB6781B)
-private val TourPurple = Color(0xFF7E61E9)
+private val TourBackground: Color
+    get() = AetherBackground
+private val TourTextPrimary: Color
+    get() = AetherOnSurface
+private val TourTextSecondary: Color
+    get() = AetherOnSurfaceVariant
+private val TourTextTertiary: Color
+    get() = AetherOnSurfaceVariant.copy(alpha = 0.72f)
+private val TourDivider: Color
+    get() = AetherOutlineSoft
+private val TourSurface: Color
+    get() = AetherSurfaceHigh
+private val TourButton: Color
+    get() = AetherPrimary
+private val TourBlue: Color
+    get() = AetherPrimary
+private val TourGreen: Color
+    get() = AetherSecondary
+private val TourGold: Color
+    get() = AetherTertiary
+private val TourPurple: Color
+    get() = AetherPrimary
+
+private fun tr(strings: AetherStrings, english: String, chinese: String): String =
+    if (strings.appLanguage == AppLanguage.SimplifiedChinese) chinese else english
 
 private enum class ProviderTourStage {
     PickProvider,
@@ -155,6 +180,7 @@ fun OnboardingScreen(
     onSaveAgentModeAuthorization: (Boolean, AgentModeAuthorizationMethod) -> Unit,
     onExploreSettings: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     var currentStep by rememberSaveable(initialStep, replayMode) {
         mutableStateOf(initialStep)
     }
@@ -260,20 +286,20 @@ fun OnboardingScreen(
             OnboardingStep.SkillsOverview -> SummaryStep(
                 stepIndex = stepIndex,
                 stepCount = steps.size,
-                message = "Later, you can add Skills so Aether remembers reusable workflows you like.",
-                title = "Skills",
+                message = tr(strings, "Later, you can add Skills so Aether remembers reusable workflows you like.", "之后你可以添加技能，让 Aether 记住你喜欢的可复用工作流。"),
+                title = tr(strings, "Skills", "技能"),
                 icon = Icons.Rounded.Extension,
                 accent = TourGold,
                 lineOne = if (installedSkillCount == 0) {
-                    "You do not need this now."
+                    tr(strings, "You do not need this now.", "现在不需要也没关系。")
                 } else {
-                    "$installedSkillCount Skills are already installed."
+                    tr(strings, "$installedSkillCount Skills are already installed.", "已经安装了 $installedSkillCount 个技能。")
                 },
-                lineTwo = "Use them for prompts, checks, and templates.",
-                chips = listOf("Prompts", "Checks", "Templates"),
-                primaryLabel = "Continue",
+                lineTwo = tr(strings, "Use them for prompts, checks, and templates.", "它们可以用来放提示词、检查项和模板。"),
+                chips = listOf(tr(strings, "Prompts", "提示词"), tr(strings, "Checks", "检查项"), tr(strings, "Templates", "模板")),
+                primaryLabel = strings.continueLabel,
                 onPrimary = { currentStep = OnboardingStep.McpOverview },
-                secondaryLabel = "Back",
+                secondaryLabel = strings.back,
                 onSecondary = { currentStep = OnboardingStep.TavilySetup },
                 onClose = onClose,
             )
@@ -281,22 +307,22 @@ fun OnboardingScreen(
             OnboardingStep.McpOverview -> SummaryStep(
                 stepIndex = stepIndex,
                 stepCount = steps.size,
-                message = "If you want live docs, search, or APIs later, you can connect MCP servers in Settings.",
+                message = tr(strings, "If you want live docs, search, or APIs later, you can connect MCP servers in Settings.", "如果之后你想接入实时文档、搜索或 API，可以在设置里连接 MCP 服务器。"),
                 title = "MCP",
                 icon = Icons.Rounded.Cloud,
                 accent = TourBlue,
                 lineOne = if (mcpServerCount == 0) {
-                    "You can leave this for later."
+                    tr(strings, "You can leave this for later.", "这一步也可以留到以后。")
                 } else {
-                    "$mcpServerCount MCP servers are already available."
+                    tr(strings, "$mcpServerCount MCP servers are already available.", "已经有 $mcpServerCount 个 MCP 服务器可用。")
                 },
-                lineTwo = "This is where Aether grows beyond local tools.",
-                chips = listOf("Docs", "Search", "APIs"),
-                primaryLabel = "Done",
+                lineTwo = tr(strings, "This is where Aether grows beyond local tools.", "这里是 Aether 超出本地工具能力的入口。"),
+                chips = listOf(tr(strings, "Docs", "文档"), tr(strings, "Search", "搜索"), "APIs"),
+                primaryLabel = strings.done,
                 onPrimary = onClose,
-                secondaryLabel = "Open settings",
+                secondaryLabel = tr(strings, "Open settings", "打开设置"),
                 onSecondary = onExploreSettings,
-                tertiaryLabel = "Back",
+                tertiaryLabel = strings.back,
                 onTertiary = { currentStep = OnboardingStep.SkillsOverview },
                 onClose = onClose,
             )
@@ -312,6 +338,7 @@ private fun LandingStep(
     onPrimary: () -> Unit,
     onSecondary: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     var visible by remember(stepIndex, replayMode) { mutableStateOf(false) }
     LaunchedEffect(stepIndex, replayMode) {
         delay(180)
@@ -332,7 +359,7 @@ private fun LandingStep(
                 stepIndex = stepIndex,
                 stepCount = stepCount,
                 onBack = null,
-                topRightLabel = if (replayMode) "Close" else "Skip",
+                topRightLabel = if (replayMode) if (strings.appLanguage == AppLanguage.SimplifiedChinese) "关闭" else "Close" else if (strings.appLanguage == AppLanguage.SimplifiedChinese) "跳过" else "Skip",
                 onTopRight = onSecondary,
             )
             Column(
@@ -357,13 +384,13 @@ private fun LandingStep(
                     ) {
                         Image(
                             painter = painterResource(id = R.drawable.aether_mark),
-                            contentDescription = "Aether icon",
+                            contentDescription = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "Aether 图标" else "Aether icon",
                             modifier = Modifier
                                 .size(104.dp),
                         )
                         Spacer(modifier = Modifier.height(28.dp))
                         Text(
-                            text = "Welcome to Aether",
+                            text = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "欢迎使用 Aether" else "Welcome to Aether",
                             modifier = Modifier.fillMaxWidth(),
                             style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
                             color = TourTextPrimary,
@@ -371,7 +398,7 @@ private fun LandingStep(
                         )
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
-                            text = "The on-device agent that works with everything.",
+                            text = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "在设备上运行、可与一切协作的智能体。" else "The on-device agent that works with everything.",
                             modifier = Modifier.fillMaxWidth(),
                             style = MaterialTheme.typography.bodyMedium,
                             color = TourTextSecondary,
@@ -400,7 +427,7 @@ private fun LandingStep(
                             contentColor = Color.White,
                         ),
                     ) {
-                        Text("Get started")
+                        Text(if (strings.appLanguage == AppLanguage.SimplifiedChinese) "开始使用" else "Get started")
                     }
                 }
             }
@@ -541,6 +568,7 @@ private fun ProviderSetupStep(
     onReturnToLanding: () -> Unit,
     onComplete: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     var stage by rememberSaveable(stepIndex, replayMode) { mutableStateOf(ProviderTourStage.PickProvider) }
     var isFinishing by rememberSaveable(stepIndex, replayMode) { mutableStateOf(false) }
     val provider = selectedProvider
@@ -557,9 +585,9 @@ private fun ProviderSetupStep(
         (provider != LlmProvider.VertexExpress || formState.apiKey.trim().isNotBlank())
 
     val message = when (stage) {
-        ProviderTourStage.PickProvider -> "First, let's choose your model provider."
-        ProviderTourStage.Credentials -> "Great. Add your key and base URL. I'll fetch the models after this."
-        ProviderTourStage.Model -> "Pick the model you want, and then we can go straight into chat."
+        ProviderTourStage.PickProvider -> if (strings.appLanguage == AppLanguage.SimplifiedChinese) "首先，我们来选择你的模型提供方。" else "First, let's choose your model provider."
+        ProviderTourStage.Credentials -> if (strings.appLanguage == AppLanguage.SimplifiedChinese) "很好。填入密钥和基础 URL，然后我会获取模型。" else "Great. Add your key and base URL. I'll fetch the models after this."
+        ProviderTourStage.Model -> if (strings.appLanguage == AppLanguage.SimplifiedChinese) "选好模型后，我们就可以直接进入聊天。" else "Pick the model you want, and then we can go straight into chat."
     }
     val backAction: (() -> Unit)? = when (stage) {
         ProviderTourStage.PickProvider -> onReturnToLanding
@@ -579,7 +607,7 @@ private fun ProviderSetupStep(
         stepCount = stepCount,
         message = message,
         onBack = backAction,
-        topRightLabel = if (replayMode) "Close" else "Skip",
+        topRightLabel = if (replayMode) if (strings.appLanguage == AppLanguage.SimplifiedChinese) "关闭" else "Close" else if (strings.appLanguage == AppLanguage.SimplifiedChinese) "跳过" else "Skip",
         onTopRight = if (replayMode) onClose else onExit,
         isExiting = isFinishing,
     ) {
@@ -609,7 +637,7 @@ private fun ProviderSetupStep(
                     ) {
                         ProviderStageButton(
                             label = "OpenAI",
-                            subtitle = "Use OpenAI-compatible APIs",
+                            subtitle = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "使用兼容 OpenAI 的 API" else "Use OpenAI-compatible APIs",
                             provider = LlmProvider.OpenAiCompatible,
                             onClick = {
                                 onSelectProvider(LlmProvider.OpenAiCompatible)
@@ -618,7 +646,7 @@ private fun ProviderSetupStep(
                         )
                         ProviderStageButton(
                             label = "Vertex",
-                            subtitle = "Use Google Cloud Vertex AI",
+                            subtitle = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "使用 Google Cloud Vertex AI" else "Use Google Cloud Vertex AI",
                             provider = LlmProvider.VertexExpress,
                             onClick = {
                                 onSelectProvider(LlmProvider.VertexExpress)
@@ -627,7 +655,7 @@ private fun ProviderSetupStep(
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "You can change this later in Settings.",
+                            text = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "你以后可以在设置中更改。" else "You can change this later in Settings.",
                             style = MaterialTheme.typography.bodySmall,
                             color = TourTextSecondary,
                         )
@@ -641,8 +669,8 @@ private fun ProviderSetupStep(
                     ) {
                         TinyLabel(
                             text = when (provider) {
-                                LlmProvider.VertexExpress -> "Using Vertex"
-                                else -> "Using OpenAI"
+                                LlmProvider.VertexExpress -> if (strings.appLanguage == AppLanguage.SimplifiedChinese) "正在使用 Vertex" else "Using Vertex"
+                                else -> if (strings.appLanguage == AppLanguage.SimplifiedChinese) "正在使用 OpenAI" else "Using OpenAI"
                             },
                             color = when (provider) {
                                 LlmProvider.VertexExpress -> TourBlue
@@ -650,24 +678,24 @@ private fun ProviderSetupStep(
                             },
                         )
                         MinimalInputField(
-                            label = "API key",
+                            label = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "API 密钥" else "API key",
                             value = formState.apiKey,
                             placeholder = if (provider == LlmProvider.VertexExpress) {
-                                "Required for Vertex"
+                                if (strings.appLanguage == AppLanguage.SimplifiedChinese) "Vertex 需要" else "Required for Vertex"
                             } else {
-                                "Optional"
+                                if (strings.appLanguage == AppLanguage.SimplifiedChinese) "可选" else "Optional"
                             },
                             onValueChange = { formState.apiKey = it },
                         )
                         MinimalInputField(
-                            label = "Base URL",
+                            label = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "基础 URL" else "Base URL",
                             value = formState.baseUrl,
                             placeholder = "https://...",
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                             onValueChange = { formState.baseUrl = it },
                         )
                         PrimaryActionButton(
-                            label = if (isLoadingModels) "Loading models..." else "Next",
+                            label = if (isLoadingModels) if (strings.appLanguage == AppLanguage.SimplifiedChinese) "正在加载模型..." else "Loading models..." else if (strings.appLanguage == AppLanguage.SimplifiedChinese) "下一步" else "Next",
                             enabled = canContinueFromCredentials && !isLoadingModels,
                             onClick = {
                                 formState.isFetchingModelsLocally = true
@@ -696,7 +724,7 @@ private fun ProviderSetupStep(
                         verticalArrangement = Arrangement.spacedBy(18.dp),
                     ) {
                         Text(
-                            text = "I'll place the best matches first when I can find them.",
+                            text = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "如果我能找到更合适的模型，我会把它们排在前面。" else "I'll place the best matches first when I can find them.",
                             style = MaterialTheme.typography.bodySmall,
                             color = TourTextSecondary,
                         )
@@ -713,18 +741,18 @@ private fun ProviderSetupStep(
                             }
                         }
                         MinimalInputField(
-                            label = "Model",
+                            label = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "模型" else "Model",
                             value = if (modelChoices.any { it.equals(formState.modelId.trim(), ignoreCase = true) }) {
                                 ""
                             } else {
                                 formState.modelId
                             },
-                            placeholder = "Or type your own model",
+                            placeholder = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "或者输入你自己的模型" else "Or type your own model",
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                             onValueChange = { formState.modelId = it },
                         )
                         PrimaryActionButton(
-                            label = "Start chat",
+                            label = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "开始聊天" else "Start chat",
                             enabled = provider != null && formState.isValid,
                             onClick = { isFinishing = true },
                         )
@@ -749,6 +777,7 @@ private fun TermuxStep(
     onInstallTermux: () -> Unit,
     onRefresh: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     var shouldAutoContinue by rememberSaveable(stepIndex) { mutableStateOf(!setupState.isReady) }
     LaunchedEffect(setupState.isReady) {
         if (shouldAutoContinue && setupState.isReady) {
@@ -763,7 +792,7 @@ private fun TermuxStep(
         stepCount = stepCount,
         message = "Great. Now let’s give Aether access to your device so tools can run locally.",
         onBack = null,
-        topRightLabel = "Close",
+        topRightLabel = strings.close,
         onTopRight = onClose,
     ) {
         Column(
@@ -773,52 +802,52 @@ private fun TermuxStep(
             StepLead(
                 icon = Icons.Rounded.Terminal,
                 accent = termuxStatusColor(setupState.issue),
-                title = "Termux",
-                body = termuxStatusSentence(setupState),
+                title = strings.termux,
+                body = termuxStatusSentence(setupState, strings.appLanguage),
             )
             when (setupState.issue) {
                 TermuxSetupIssue.Ready -> TourActionRow(
-                    primaryLabel = "Continue",
+                    primaryLabel = strings.continueLabel,
                     onPrimary = onContinue,
-                    secondaryLabel = "Refresh",
+                    secondaryLabel = strings.refresh,
                     onSecondary = onRefresh,
                 )
 
                 TermuxSetupIssue.NotInstalled -> TourActionRow(
-                    primaryLabel = "Install",
+                    primaryLabel = strings.install,
                     onPrimary = onInstallTermux,
-                    secondaryLabel = "Skip",
+                    secondaryLabel = strings.skip,
                     onSecondary = onContinue,
                 )
 
                 TermuxSetupIssue.PermissionMissing -> {
                     TourActionRow(
-                        primaryLabel = "Grant access",
+                        primaryLabel = strings.grantAccess,
                         onPrimary = onRequestPermission,
-                        secondaryLabel = "Skip",
+                        secondaryLabel = strings.skip,
                         onSecondary = onContinue,
                     )
-                    SecondaryTextAction(label = "App settings", onClick = onOpenAppPermissions)
+                    SecondaryTextAction(label = tr(strings, "App settings", "应用设置"), onClick = onOpenAppPermissions)
                 }
 
                 TermuxSetupIssue.ExternalAppsDisabled -> {
                     TourActionRow(
-                        primaryLabel = "Termux settings",
+                        primaryLabel = tr(strings, "Termux settings", "Termux 设置"),
                         onPrimary = onOpenTermuxSettings,
-                        secondaryLabel = "Skip",
+                        secondaryLabel = strings.skip,
                         onSecondary = onContinue,
                     )
-                    SecondaryTextAction(label = "Open Termux", onClick = onOpenTermux)
+                    SecondaryTextAction(label = strings.openTermux, onClick = onOpenTermux)
                 }
 
                 TermuxSetupIssue.DispatchFailed -> {
                     TourActionRow(
-                        primaryLabel = "Open Termux",
+                        primaryLabel = strings.openTermux,
                         onPrimary = onOpenTermux,
-                        secondaryLabel = "Skip",
+                        secondaryLabel = strings.skip,
                         onSecondary = onContinue,
                     )
-                    SecondaryTextAction(label = "Termux settings", onClick = onOpenTermuxSettings)
+                    SecondaryTextAction(label = tr(strings, "Termux settings", "Termux 设置"), onClick = onOpenTermuxSettings)
                 }
             }
         }
@@ -834,12 +863,13 @@ private fun AgentModeAuthorizationStep(
     onClose: () -> Unit,
     onContinue: (Boolean, AgentModeAuthorizationMethod) -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     ConversationStepPage(
         stepIndex = stepIndex,
         stepCount = stepCount,
-        message = "Agent Mode is optional. It needs Root or Shizuku to control an isolated Android display.",
+        message = tr(strings, "Agent Mode is optional. It needs Root or Shizuku to control an isolated Android display.", "Agent 模式是可选项。它需要 Root 或 Shizuku 来控制隔离的 Android 显示。"),
         onBack = onBack,
-        topRightLabel = "Close",
+        topRightLabel = strings.close,
         onTopRight = onClose,
     ) {
         Column(
@@ -849,8 +879,8 @@ private fun AgentModeAuthorizationStep(
             StepLead(
                 icon = Icons.Rounded.SmartToy,
                 accent = TourGreen,
-                title = "Agent Mode",
-                body = "Choose an authorization method, or skip this for now.",
+                title = strings.agentMode,
+                body = tr(strings, "Choose an authorization method, or skip this for now.", "选择一种授权方式，或者暂时先跳过。"),
             )
             Column(
                 modifier = Modifier.fillMaxWidth(),
@@ -858,19 +888,19 @@ private fun AgentModeAuthorizationStep(
             ) {
                 AgentModeStageButton(
                     label = "Shizuku",
-                    subtitle = "Use the elevated Shizuku service when the app is installed.",
+                    subtitle = tr(strings, "Use the elevated Shizuku service when the app is installed.", "安装应用后使用提权的 Shizuku 服务。"),
                     drawableRes = R.drawable.shizuku_mark,
                     onClick = { onContinue(true, AgentModeAuthorizationMethod.Shizuku) },
                 )
                 AgentModeStageButton(
                     label = "Root",
-                    subtitle = "Use a root shell for privileged input on rooted devices.",
+                    subtitle = tr(strings, "Use a root shell for privileged input on rooted devices.", "在已 root 的设备上使用 root shell 进行特权输入。"),
                     drawableRes = R.drawable.root_mark,
                     onClick = { onContinue(true, AgentModeAuthorizationMethod.Root) },
                 )
                 AgentModeStageButton(
-                    label = "Skip",
-                    subtitle = "Leave Agent Mode off and enable it later from Settings.",
+                    label = strings.skip,
+                    subtitle = tr(strings, "Leave Agent Mode off and enable it later from Settings.", "先关闭 Agent 模式，之后再到设置中启用。"),
                     drawableRes = R.drawable.skip_mark,
                     onClick = { onContinue(false, initialMethod) },
                 )
@@ -889,12 +919,13 @@ private fun TavilyStep(
     onClose: () -> Unit,
     onContinue: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     ConversationStepPage(
         stepIndex = stepIndex,
         stepCount = stepCount,
-        message = "If you want fresher web answers later, you can add search here.",
+        message = tr(strings, "If you want fresher web answers later, you can add search here.", "如果你之后想获得更新鲜的网页答案，可以在这里补上搜索能力。"),
         onBack = onBack,
-        topRightLabel = "Close",
+        topRightLabel = strings.close,
         onTopRight = onClose,
     ) {
         Column(
@@ -904,16 +935,16 @@ private fun TavilyStep(
             BrandStepLead(
                 drawableRes = R.drawable.tavily_mark,
                 title = "Tavily",
-                body = "This is optional. URL fetch already works without it.",
+                body = tr(strings, "This is optional. URL fetch already works without it.", "这是可选项。即使不填，URL 抓取也已经可以使用。"),
             )
             MinimalInputField(
-                label = "API key",
+                label = tr(strings, "API key", "API 密钥"),
                 value = value,
-                placeholder = "Paste it here",
+                placeholder = tr(strings, "Paste it here", "粘贴到这里"),
                 onValueChange = onValueChange,
             )
             PrimaryActionButton(
-                label = "Continue",
+                label = strings.continueLabel,
                 onClick = onContinue,
             )
         }
@@ -939,12 +970,13 @@ private fun SummaryStep(
     onTertiary: (() -> Unit)? = null,
     onClose: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     ConversationStepPage(
         stepIndex = stepIndex,
         stepCount = stepCount,
         message = message,
         onBack = onTertiary,
-        topRightLabel = "Close",
+        topRightLabel = strings.close,
         onTopRight = onClose,
     ) {
         Column(
@@ -1580,13 +1612,14 @@ private fun providerModelRank(
 
 private fun termuxStatusSentence(
     setupState: TermuxSetupState,
+    appLanguage: AppLanguage,
 ): String = setupState.detail.ifBlank {
     when (setupState.issue) {
-        TermuxSetupIssue.Ready -> "Local tools are ready."
-        TermuxSetupIssue.NotInstalled -> "Install Termux first, then come back here."
-        TermuxSetupIssue.PermissionMissing -> "Grant the Termux command permission, then return here."
-        TermuxSetupIssue.ExternalAppsDisabled -> "Open Termux settings and allow external apps."
-        TermuxSetupIssue.DispatchFailed -> "Open Termux once, then refresh here."
+        TermuxSetupIssue.Ready -> if (appLanguage == AppLanguage.SimplifiedChinese) "本地工具已就绪。" else "Local tools are ready."
+        TermuxSetupIssue.NotInstalled -> if (appLanguage == AppLanguage.SimplifiedChinese) "先安装 Termux，然后再回到这里。" else "Install Termux first, then come back here."
+        TermuxSetupIssue.PermissionMissing -> if (appLanguage == AppLanguage.SimplifiedChinese) "授予 Termux 命令权限后再回来。" else "Grant the Termux command permission, then return here."
+        TermuxSetupIssue.ExternalAppsDisabled -> if (appLanguage == AppLanguage.SimplifiedChinese) "打开 Termux 设置并允许外部应用。" else "Open Termux settings and allow external apps."
+        TermuxSetupIssue.DispatchFailed -> if (appLanguage == AppLanguage.SimplifiedChinese) "先打开一次 Termux，然后回到这里刷新。" else "Open Termux once, then refresh here."
     }
 }
 

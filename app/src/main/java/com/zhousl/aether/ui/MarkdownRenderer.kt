@@ -66,12 +66,14 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.view.ViewCompat
+import com.zhousl.aether.data.AppLanguage
 import com.zhousl.aether.data.WorkspaceFileBridge
 import com.zhousl.aether.termux.TermuxContract
 import com.zhousl.aether.ui.theme.AetherOnSurface
 import com.zhousl.aether.ui.theme.AetherOnSurfaceVariant
 import com.zhousl.aether.ui.theme.AetherOutlineSoft
 import com.zhousl.aether.ui.theme.AetherPrimary
+import com.zhousl.aether.ui.theme.AetherSurface
 import com.zhousl.aether.ui.theme.AetherSurfaceHigh
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -378,7 +380,7 @@ private fun MarkdownTable(
             .fillMaxWidth()
             .horizontalScroll(rememberScrollState())
             .clip(RoundedCornerShape(18.dp))
-            .background(Color.White.copy(alpha = 0.84f)),
+            .background(AetherSurface.copy(alpha = 0.92f)),
     ) {
         MarkdownTableRow(
             cells = headers,
@@ -410,7 +412,7 @@ private fun MarkdownTableRow(
         modifier = Modifier.background(
             when {
                 isHeader -> AetherSurfaceHigh
-                shaded -> Color.White.copy(alpha = 0.46f)
+                shaded -> AetherSurface.copy(alpha = 0.68f)
                 else -> Color.Transparent
             }
         )
@@ -551,8 +553,9 @@ private fun MarkdownImageBlock(
             )
         }
         if (!originalLinkTarget.isNullOrBlank()) {
+            val strings = rememberAetherStrings()
             Text(
-                text = "Open original",
+                text = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "打开原图" else "Open original",
                 style = MaterialTheme.typography.bodySmall,
                 color = AetherPrimary,
                 modifier = Modifier.clickable { onLinkClick(originalLinkTarget) },
@@ -595,7 +598,7 @@ private fun MarkdownMermaidBlock(
             defaultMaxHeightDp = DefaultMermaidMaxHeightDp,
             modifier = widthModifier
                 .clip(RoundedCornerShape(18.dp))
-                .background(Color.White),
+                .background(AetherSurface),
             onTap = { showPreview = true },
         )
     }
@@ -617,7 +620,7 @@ private fun MarkdownHtmlBlock(
     defaultMinHeightDp: Int,
     defaultMaxHeightDp: Int,
     modifier: Modifier = Modifier,
-    backgroundColor: Color = Color.White,
+    backgroundColor: Color = AetherSurface,
     onTap: (() -> Unit)? = null,
     onLinkClick: ((String) -> Unit)? = null,
 ) {

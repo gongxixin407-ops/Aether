@@ -2,30 +2,52 @@ package com.zhousl.aether.ui.theme
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import com.zhousl.aether.data.AppThemeMode
 
-private val AetherColors = lightColorScheme(
-    primary = AetherPrimary,
-    onPrimary = AetherOnPrimary,
-    primaryContainer = AetherPrimaryContainer,
-    onPrimaryContainer = AetherOnPrimaryContainer,
-    secondary = AetherSecondary,
-    onSecondary = AetherOnSecondary,
-    secondaryContainer = AetherSecondaryContainer,
-    onSecondaryContainer = AetherOnSecondaryContainer,
-    background = AetherBackground,
-    surface = AetherSurface,
-    surfaceVariant = AetherSurfaceVariant,
-    onSurface = AetherOnSurface,
-    onSurfaceVariant = AetherOnSurfaceVariant,
-    tertiary = AetherTertiary,
-    error = AetherError,
-    outline = AetherOutline
+private val LightAetherColors = lightColorScheme(
+    primary = LightAetherPalette.primary,
+    onPrimary = LightAetherPalette.onPrimary,
+    primaryContainer = LightAetherPalette.primaryContainer,
+    onPrimaryContainer = LightAetherPalette.onPrimaryContainer,
+    secondary = LightAetherPalette.secondary,
+    onSecondary = LightAetherPalette.onSecondary,
+    secondaryContainer = LightAetherPalette.secondaryContainer,
+    onSecondaryContainer = LightAetherPalette.onSecondaryContainer,
+    background = LightAetherPalette.background,
+    surface = LightAetherPalette.surface,
+    surfaceVariant = LightAetherPalette.surfaceVariant,
+    onSurface = LightAetherPalette.onSurface,
+    onSurfaceVariant = LightAetherPalette.onSurfaceVariant,
+    tertiary = LightAetherPalette.tertiary,
+    error = LightAetherPalette.error,
+    outline = LightAetherPalette.outline,
+)
+
+private val DarkAetherColors = darkColorScheme(
+    primary = DarkAetherPalette.primary,
+    onPrimary = DarkAetherPalette.onPrimary,
+    primaryContainer = DarkAetherPalette.primaryContainer,
+    onPrimaryContainer = DarkAetherPalette.onPrimaryContainer,
+    secondary = DarkAetherPalette.secondary,
+    onSecondary = DarkAetherPalette.onSecondary,
+    secondaryContainer = DarkAetherPalette.secondaryContainer,
+    onSecondaryContainer = DarkAetherPalette.onSecondaryContainer,
+    background = DarkAetherPalette.background,
+    surface = DarkAetherPalette.surface,
+    surfaceVariant = DarkAetherPalette.surfaceVariant,
+    onSurface = DarkAetherPalette.onSurface,
+    onSurfaceVariant = DarkAetherPalette.onSurfaceVariant,
+    tertiary = DarkAetherPalette.tertiary,
+    error = DarkAetherPalette.error,
+    outline = DarkAetherPalette.outline,
 )
 
 private val AetherTypography = Typography(
@@ -89,10 +111,14 @@ private val AetherTypography = Typography(
 
 @Composable
 fun AetherTheme(
+    themeMode: AppThemeMode = AppThemeMode.Light,
     content: @Composable () -> Unit
 ) {
+    SideEffect {
+        updateAetherPalette(themeMode)
+    }
     MaterialTheme(
-        colorScheme = AetherColors,
+        colorScheme = if (themeMode == AppThemeMode.Dark) DarkAetherColors else LightAetherColors,
         typography = AetherTypography,
         content = content
     )

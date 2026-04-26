@@ -12,7 +12,9 @@ import com.zhousl.aether.data.AgentModeDisplayState
 import com.zhousl.aether.data.AgentModeAuthorizationMethod
 import com.zhousl.aether.data.AgentExtensionsRepository
 import com.zhousl.aether.data.AgentSkillManager
+import com.zhousl.aether.data.AppLanguage
 import com.zhousl.aether.data.AppSettings
+import com.zhousl.aether.data.AppThemeMode
 import com.zhousl.aether.data.AetherAgent
 import com.zhousl.aether.data.CurrentOnboardingVersion
 import com.zhousl.aether.data.InstalledSkill
@@ -1043,6 +1045,8 @@ class AetherViewModel(
         notifyOnTaskCompletion: Boolean,
         agentModeAuthorizationEnabled: Boolean,
         agentModeAuthorizationMethod: AgentModeAuthorizationMethod,
+        language: AppLanguage,
+        themeMode: AppThemeMode,
     ) {
         viewModelScope.launch {
             settingsRepository.updateSettings(
@@ -1061,12 +1065,26 @@ class AetherViewModel(
                     notifyOnTaskCompletion = notifyOnTaskCompletion,
                     agentModeAuthorizationEnabled = agentModeAuthorizationEnabled,
                     agentModeAuthorizationMethod = agentModeAuthorizationMethod,
+                    language = language,
+                    themeMode = themeMode,
                 )
             )
         }
     }
 
     // ── Multi-Provider methods ───────────────────────────────────────────────
+
+    fun updateAppLanguage(language: AppLanguage) {
+        viewModelScope.launch {
+            settingsRepository.updateLanguage(language)
+        }
+    }
+
+    fun updateAppThemeMode(themeMode: AppThemeMode) {
+        viewModelScope.launch {
+            settingsRepository.updateThemeMode(themeMode)
+        }
+    }
 
     fun upsertProviderConfig(config: LlmProviderConfig) {
         viewModelScope.launch {
@@ -2583,6 +2601,8 @@ class AetherViewModel(
         put("notifyOnTaskCompletion", notifyOnTaskCompletion)
         put("agentModeAuthorizationEnabled", agentModeAuthorizationEnabled)
         put("agentModeAuthorizationMethod", agentModeAuthorizationMethod.storageValue)
+        put("language", language.storageValue)
+        put("themeMode", themeMode.storageValue)
         put("onboardingSeenVersion", onboardingSeenVersion)
         put("onboardingCompletedVersion", onboardingCompletedVersion)
     }
@@ -2619,6 +2639,11 @@ class AetherViewModel(
                 json.optString("agentModeAuthorizationMethod"),
                 defaults.agentModeAuthorizationMethod,
             ),
+            language = AppLanguage.fromStorage(
+                json.optString("language"),
+                defaults.language,
+            ),
+            themeMode = AppThemeMode.fromStorage(json.optString("themeMode")),
             onboardingSeenVersion = json.optInt("onboardingSeenVersion", defaults.onboardingSeenVersion),
             onboardingCompletedVersion = json.optInt(
                 "onboardingCompletedVersion",

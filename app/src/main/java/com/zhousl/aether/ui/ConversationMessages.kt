@@ -119,6 +119,7 @@ import com.zhousl.aether.ui.theme.AetherSecondary
 import com.zhousl.aether.ui.theme.AetherSurface
 import com.zhousl.aether.ui.theme.AetherSurfaceHigh
 import com.zhousl.aether.ui.theme.AetherTertiary
+import com.zhousl.aether.data.AppLanguage
 import com.zhousl.aether.termux.TermuxSetupIssue
 import com.zhousl.aether.termux.TermuxSetupState
 import kotlinx.coroutines.Dispatchers
@@ -194,7 +195,7 @@ fun SurfaceNotice(
             .fillMaxWidth()
             .shadow(12.dp, RoundedCornerShape(24.dp), ambientColor = AetherScrim, spotColor = AetherScrim)
             .clip(RoundedCornerShape(24.dp))
-            .background(Color.White.copy(alpha = 0.96f))
+            .background(AetherSurface.copy(alpha = 0.96f))
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -222,29 +223,32 @@ fun TermuxSetupNotice(
     onRefresh: () -> Unit,
 ) {
     if (setupState.isReady) return
+    val strings = rememberAetherStrings()
 
     val title: String
     val subtitle: String
 
     when (setupState.issue) {
         TermuxSetupIssue.NotInstalled -> {
-            title = "Install Termux to enable bash"
-            subtitle = "Aether uses Termux to run shell commands on-device."
+            title = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "安装 Termux 以启用 bash" else "Install Termux to enable bash"
+            subtitle = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "Aether 使用 Termux 在设备上运行 shell 命令。" else "Aether uses Termux to run shell commands on-device."
         }
 
         TermuxSetupIssue.PermissionMissing -> {
-            title = "Grant Termux command access"
-            subtitle = "Aether needs the \"Run commands in Termux environment\" permission."
+            title = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "授予 Termux 命令访问权限" else "Grant Termux command access"
+            subtitle = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "Aether 需要“在 Termux 环境中运行命令”的权限。" else "Aether needs the \"Run commands in Termux environment\" permission."
         }
 
         TermuxSetupIssue.ExternalAppsDisabled -> {
-            title = "Enable external apps in Termux"
-            subtitle = "Open Termux settings, or add allow-external-apps=true to ~/.termux/termux.properties."
+            title = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "在 Termux 中启用外部应用" else "Enable external apps in Termux"
+            subtitle = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "打开 Termux 设置，或者在 ~/.termux/termux.properties 中添加 allow-external-apps=true。" else "Open Termux settings, or add allow-external-apps=true to ~/.termux/termux.properties."
         }
 
         TermuxSetupIssue.DispatchFailed -> {
-            title = "Finish Termux setup"
-            subtitle = setupState.detail.ifBlank { "Open Termux once and verify its integration settings." }
+            title = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "完成 Termux 设置" else "Finish Termux setup"
+            subtitle = setupState.detail.ifBlank {
+                if (strings.appLanguage == AppLanguage.SimplifiedChinese) "打开一次 Termux，并确认其集成设置。" else "Open Termux once and verify its integration settings."
+            }
         }
 
         TermuxSetupIssue.Ready -> return
@@ -255,7 +259,7 @@ fun TermuxSetupNotice(
             .fillMaxWidth()
             .shadow(12.dp, RoundedCornerShape(24.dp), ambientColor = AetherScrim, spotColor = AetherScrim)
             .clip(RoundedCornerShape(24.dp))
-            .background(Color.White.copy(alpha = 0.96f))
+            .background(AetherSurface.copy(alpha = 0.96f))
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -277,13 +281,13 @@ fun TermuxSetupNotice(
                 TermuxSetupIssue.NotInstalled -> {
                     ActionIconLabel(
                         icon = Icons.AutoMirrored.Rounded.OpenInNew,
-                        label = "Install Termux",
+                        label = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "安装 Termux" else "Install Termux",
                         enabled = true,
                         onClick = onInstallTermux,
                     )
                     ActionIconLabel(
                         icon = Icons.Rounded.Refresh,
-                        label = "Refresh",
+                        label = strings.refresh,
                         enabled = true,
                         onClick = onRefresh,
                     )
@@ -292,13 +296,13 @@ fun TermuxSetupNotice(
                 TermuxSetupIssue.PermissionMissing -> {
                     ActionIconLabel(
                         icon = Icons.Rounded.Settings,
-                        label = "Grant access",
+                        label = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "授予访问权限" else "Grant access",
                         enabled = true,
                         onClick = onRequestPermission,
                     )
                     ActionIconLabel(
                         icon = Icons.AutoMirrored.Rounded.OpenInNew,
-                        label = "App settings",
+                        label = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "应用设置" else "App settings",
                         enabled = true,
                         onClick = onOpenAppPermissions,
                     )
@@ -307,19 +311,19 @@ fun TermuxSetupNotice(
                 TermuxSetupIssue.ExternalAppsDisabled -> {
                     ActionIconLabel(
                         icon = Icons.Rounded.Settings,
-                        label = "Termux settings",
+                        label = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "Termux 设置" else "Termux settings",
                         enabled = true,
                         onClick = onOpenTermuxSettings,
                     )
                     ActionIconLabel(
                         icon = Icons.AutoMirrored.Rounded.OpenInNew,
-                        label = "Open Termux",
+                        label = strings.openTermux,
                         enabled = true,
                         onClick = onOpenTermux,
                     )
                     ActionIconLabel(
                         icon = Icons.Rounded.Refresh,
-                        label = "Refresh",
+                        label = strings.refresh,
                         enabled = true,
                         onClick = onRefresh,
                     )
@@ -328,19 +332,19 @@ fun TermuxSetupNotice(
                 TermuxSetupIssue.DispatchFailed -> {
                     ActionIconLabel(
                         icon = Icons.AutoMirrored.Rounded.OpenInNew,
-                        label = "Open Termux",
+                        label = strings.openTermux,
                         enabled = true,
                         onClick = onOpenTermux,
                     )
                     ActionIconLabel(
                         icon = Icons.Rounded.Settings,
-                        label = "Termux settings",
+                        label = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "Termux 设置" else "Termux settings",
                         enabled = true,
                         onClick = onOpenTermuxSettings,
                     )
                     ActionIconLabel(
                         icon = Icons.Rounded.Refresh,
-                        label = "Refresh",
+                        label = strings.refresh,
                         enabled = true,
                         onClick = onRefresh,
                     )
@@ -357,12 +361,13 @@ fun ComposerAttachmentTray(
     attachments: List<ChatAttachment>,
     onRemoveAttachment: (String) -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .shadow(10.dp, RoundedCornerShape(24.dp), ambientColor = AetherScrim, spotColor = AetherScrim)
             .clip(RoundedCornerShape(24.dp))
-            .background(Color.White.copy(alpha = 0.96f))
+            .background(AetherSurface.copy(alpha = 0.96f))
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -456,6 +461,7 @@ private fun UserMessageActionDialog(
     onEdit: () -> Unit,
     onRetry: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     val menuVisibility = remember { MutableTransitionState(false) }
     menuVisibility.targetState = expanded
     if (!menuVisibility.currentState && !menuVisibility.targetState) return
@@ -513,22 +519,22 @@ private fun UserMessageActionDialog(
                 }
                 UserMessageActionRow(
                     icon = Icons.Rounded.ContentCopy,
-                    label = "Copy",
+                    label = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "复制" else "Copy",
                     onClick = onCopy,
                 )
                 UserMessageActionRow(
                     icon = Icons.Rounded.Description,
-                    label = "Select Text",
+                    label = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "选择文本" else "Select Text",
                     onClick = onSelectText,
                 )
                 UserMessageActionRow(
                     icon = Icons.Rounded.Edit,
-                    label = "Edit Message",
+                    label = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "编辑消息" else "Edit Message",
                     onClick = onEdit,
                 )
                 UserMessageActionRow(
                     icon = Icons.Rounded.Refresh,
-                    label = "Retry",
+                    label = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "重试" else "Retry",
                     onClick = onRetry,
                 )
             }
@@ -623,6 +629,7 @@ private fun SelectUserMessageTextDialog(
     text: String,
     onDismissRequest: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     if (!expanded) return
 
     Dialog(
@@ -640,7 +647,7 @@ private fun SelectUserMessageTextDialog(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(
-                text = "Select Text",
+                text = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "选择文本" else "Select Text",
                 style = MaterialTheme.typography.titleMedium,
                 color = AetherOnSurface,
             )
@@ -705,6 +712,7 @@ private fun AssistantMessageBlock(
     onRedo: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -714,7 +722,11 @@ private fun AssistantMessageBlock(
         }
         message.thoughtDurationMillis?.let { duration ->
             Text(
-                text = "Thought for ${formatThoughtDuration(duration)}",
+                text = if (strings.appLanguage == AppLanguage.SimplifiedChinese) {
+                    "思考了 ${formatThoughtDuration(duration)}"
+                } else {
+                    "Thought for ${formatThoughtDuration(duration)}"
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = AetherOnSurfaceVariant,
             )
@@ -744,18 +756,18 @@ private fun AssistantMessageBlock(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             AssistantMessageAction(
                 icon = LucideIcons.Copy,
-                contentDescription = "Copy reply",
+                contentDescription = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "复制回复" else "Copy reply",
                 onClick = onCopy,
             )
             AssistantMessageAction(
                 icon = LucideIcons.RotateCcw,
-                contentDescription = "Redo reply",
+                contentDescription = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "重新执行回复" else "Redo reply",
                 enabled = actionsEnabled,
                 onClick = onRedo,
             )
             AssistantMessageAction(
                 icon = LucideIcons.Trash2,
-                contentDescription = "Delete reply",
+                contentDescription = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "删除回复" else "Delete reply",
                 enabled = actionsEnabled,
                 onClick = onDelete,
             )
@@ -768,6 +780,7 @@ private fun AgentModeReplayPanel(
     frames: List<AgentModeReplayFrame>,
     stateKey: String,
 ) {
+    val strings = rememberAetherStrings()
     var selectedIndex by rememberSaveable(stateKey, frames.size) {
         mutableStateOf((frames.size - 1).coerceAtLeast(0))
     }
@@ -786,7 +799,7 @@ private fun AgentModeReplayPanel(
             .fillMaxWidth()
             .shadow(12.dp, RoundedCornerShape(24.dp), ambientColor = AetherScrim, spotColor = AetherScrim)
             .clip(RoundedCornerShape(24.dp))
-            .background(Color.White)
+            .background(AetherSurface)
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -802,7 +815,7 @@ private fun AgentModeReplayPanel(
             if (bitmap != null) {
                 Image(
                     bitmap = bitmap.asImageBitmap(),
-                    contentDescription = "Agent Mode replay frame",
+                    contentDescription = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "Agent 模式回放帧" else "Agent Mode replay frame",
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(10.dp)
@@ -811,7 +824,7 @@ private fun AgentModeReplayPanel(
                 )
             } else {
                 Text(
-                    text = "Preview unavailable",
+                    text = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "预览不可用" else "Preview unavailable",
                     style = MaterialTheme.typography.bodySmall,
                     color = AetherOnSurfaceVariant,
                 )
@@ -852,7 +865,7 @@ private fun AgentModeReplayToolStatus(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
-            .background(Color(0xFFF6F7FB))
+            .background(AetherSurfaceHigh)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -884,7 +897,7 @@ private fun ReplayStepButton(
         modifier = Modifier
             .size(32.dp)
             .clip(CircleShape)
-            .background(if (enabled) Color(0xFFF0F3FA) else Color.Transparent)
+            .background(if (enabled) AetherSurfaceHigh else Color.Transparent)
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -905,6 +918,7 @@ fun ToolInvocationList(
     stateKey: String,
     autoExpand: Boolean = false,
 ) {
+    val strings = rememberAetherStrings()
     if (toolInvocations.isEmpty()) return
 
     if (toolInvocations.size < ToolInvocationCollapseThreshold) {
@@ -974,14 +988,14 @@ fun ToolInvocationList(
             ) {
                 if (isRunning) {
                     ShimmerStatusText(
-                        text = formatToolInvocationGroupTitle(toolInvocations.size, isRunning = true),
+                        text = strings.toolInvocationGroupTitle(toolInvocations.size, isRunning = true),
                         modifier = Modifier.weight(1f),
                         travelDurationMillis = 2600,
                         pauseDurationMillis = 1000,
                     )
                 } else {
                     Text(
-                        text = formatToolInvocationGroupTitle(toolInvocations.size, isRunning = false),
+                        text = strings.toolInvocationGroupTitle(toolInvocations.size, isRunning = false),
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.bodyMedium,
                         color = AetherOnSurfaceVariant,
@@ -989,7 +1003,11 @@ fun ToolInvocationList(
                 }
                 Icon(
                     imageVector = Icons.AutoMirrored.Rounded.ArrowForwardIos,
-                    contentDescription = if (expanded) "Collapse tools" else "Expand tools",
+                    contentDescription = if (expanded) {
+                        if (strings.appLanguage == AppLanguage.SimplifiedChinese) "折叠工具" else "Collapse tools"
+                    } else {
+                        if (strings.appLanguage == AppLanguage.SimplifiedChinese) "展开工具" else "Expand tools"
+                    },
                     tint = AetherOnSurfaceVariant,
                     modifier = Modifier
                         .size(14.dp)
@@ -1296,7 +1314,8 @@ fun ToolInvocationCard(
     toolInvocation: ChatToolInvocation,
     topPadding: Dp = 6.dp,
 ) {
-    val detail = remember(toolInvocation) { formatToolInvocationDetail(toolInvocation) }
+    val strings = rememberAetherStrings()
+    val detail = remember(toolInvocation, strings.appLanguage) { formatToolInvocationDetail(strings, toolInvocation) }
     var expanded by rememberSaveable(toolInvocation.id) { mutableStateOf(false) }
     LaunchedEffect(
         toolInvocation.id,
@@ -1332,13 +1351,13 @@ fun ToolInvocationCard(
     ) {
         if (toolInvocation.isRunning) {
             ShimmerStatusText(
-                text = formatToolInvocationTitleLabel(toolInvocation),
+                text = strings.toolInvocationTitleLabel(toolInvocation.toolName, true, parseJsonObject(toolInvocation.argumentsJson)),
                 travelDurationMillis = 3200,
                 pauseDurationMillis = 1000,
             )
         } else {
             Text(
-                text = formatToolInvocationTitleLabel(toolInvocation),
+                text = strings.toolInvocationTitleLabel(toolInvocation.toolName, false, parseJsonObject(toolInvocation.argumentsJson)),
                 style = MaterialTheme.typography.bodyMedium,
                 color = AetherOnSurfaceVariant,
             )
@@ -1365,12 +1384,12 @@ fun ToolInvocationCard(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SyntaxHighlightedCodeBlock(
-                    label = "Command",
+                    label = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "命令" else "Command",
                     content = remember(detail.command) { highlightBashCommand(detail.command) },
                 )
                 detail.result?.let { result ->
                     SyntaxHighlightedCodeBlock(
-                        label = "Result",
+                        label = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "结果" else "Result",
                         content = remember(result) { highlightToolResult(result) },
                     )
                 }
@@ -1441,6 +1460,7 @@ fun AttachmentPreviewDialog(
     onDismiss: () -> Unit,
     onSave: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -1451,7 +1471,7 @@ fun AttachmentPreviewDialog(
                 .padding(horizontal = 18.dp, vertical = 24.dp)
                 .shadow(24.dp, RoundedCornerShape(30.dp), ambientColor = AetherScrim, spotColor = AetherScrim)
                 .clip(RoundedCornerShape(30.dp))
-                .background(Color.White.copy(alpha = 0.98f))
+            .background(AetherSurface.copy(alpha = 0.98f))
                 .padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -1482,14 +1502,14 @@ fun AttachmentPreviewDialog(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = formatAttachmentMetaLabel(attachment),
+                    text = formatAttachmentMetaLabel(strings, attachment),
                         style = MaterialTheme.typography.bodySmall,
                         color = AetherOnSurfaceVariant,
                     )
                 }
                 IconOnlyAction(
                     icon = Icons.Rounded.Close,
-                    contentDescription = "Close preview",
+                    contentDescription = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "关闭预览" else "Close preview",
                     onClick = onDismiss,
                 )
             }
@@ -1502,7 +1522,7 @@ fun AttachmentPreviewDialog(
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 ActionIconLabel(
                     icon = Icons.Rounded.Download,
-                    label = "Save",
+                    label = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "保存" else "Save",
                     enabled = true,
                     onClick = onSave,
                 )
@@ -1546,6 +1566,7 @@ private fun AttachmentImagePreview(
 private fun AttachmentFilePreview(
     attachment: ChatAttachment,
 ) {
+    val strings = rememberAetherStrings()
     val preview = rememberAttachmentTextPreview(attachment)
 
     Column(
@@ -1558,7 +1579,7 @@ private fun AttachmentFilePreview(
     ) {
         if (preview == null) {
             Text(
-                text = "Preview unavailable for this file type.",
+                text = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "此文件类型无法预览。" else "Preview unavailable for this file type.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = AetherOnSurfaceVariant,
             )
@@ -1579,7 +1600,7 @@ private fun AttachmentFilePreview(
             }
             if (preview.isTruncated) {
                 Text(
-                    text = "Preview truncated for readability.",
+                    text = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "为了便于阅读，预览内容已截断。" else "Preview truncated for readability.",
                     style = MaterialTheme.typography.bodySmall,
                     color = AetherOnSurfaceVariant,
                 )
@@ -1599,7 +1620,7 @@ private fun UserImageAttachmentCard(
             .widthIn(max = 300.dp)
             .shadow(10.dp, RoundedCornerShape(24.dp), ambientColor = AetherScrim, spotColor = AetherScrim)
             .clip(RoundedCornerShape(24.dp))
-            .background(Color.White)
+            .background(AetherSurface)
             .clickable(onClick = onClick)
     ) {
         if (bitmap != null) {
@@ -1634,12 +1655,13 @@ private fun UserFileAttachmentCard(
     attachment: ChatAttachment,
     onClick: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     Row(
         modifier = Modifier
             .widthIn(max = 300.dp)
             .shadow(10.dp, RoundedCornerShape(22.dp), ambientColor = AetherScrim, spotColor = AetherScrim)
             .clip(RoundedCornerShape(22.dp))
-            .background(Color.White)
+            .background(AetherSurface)
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1663,7 +1685,7 @@ private fun UserFileAttachmentCard(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = formatAttachmentMetaLabel(attachment),
+                    text = formatAttachmentMetaLabel(strings, attachment),
                 style = MaterialTheme.typography.bodySmall,
                 color = AetherOnSurfaceVariant,
                 maxLines = 1,
@@ -1684,6 +1706,7 @@ private fun ComposerImageAttachmentCard(
     attachment: ChatAttachment,
     onRemove: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     val bitmap = rememberAttachmentBitmap(attachment.uri, maxSize = 600)
     Row(
         modifier = Modifier
@@ -1698,7 +1721,7 @@ private fun ComposerImageAttachmentCard(
             modifier = Modifier
                 .size(62.dp)
                 .clip(RoundedCornerShape(16.dp))
-                .background(Color.White),
+            .background(AetherSurface),
             contentAlignment = Alignment.Center,
         ) {
             if (bitmap != null) {
@@ -1721,7 +1744,7 @@ private fun ComposerImageAttachmentCard(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = formatComposerAttachmentMetaLabel(attachment),
+                    text = formatComposerAttachmentMetaLabel(strings, attachment),
                 style = MaterialTheme.typography.bodySmall,
                 color = AetherOnSurfaceVariant,
             )
@@ -1739,6 +1762,7 @@ private fun ComposerFileAttachmentCard(
     attachment: ChatAttachment,
     onRemove: () -> Unit,
 ) {
+    val strings = rememberAetherStrings()
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1752,7 +1776,7 @@ private fun ComposerFileAttachmentCard(
             modifier = Modifier
                 .size(38.dp)
                 .clip(CircleShape)
-                .background(Color.White),
+            .background(AetherSurface),
             contentAlignment = Alignment.Center,
         ) {
             Icon(Icons.Rounded.AttachFile, contentDescription = null, tint = AetherOnSurface)
@@ -1766,7 +1790,7 @@ private fun ComposerFileAttachmentCard(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = formatComposerAttachmentMetaLabel(attachment),
+                    text = formatComposerAttachmentMetaLabel(strings, attachment),
                 style = MaterialTheme.typography.bodySmall,
                 color = AetherOnSurfaceVariant,
             )
@@ -1811,7 +1835,9 @@ private fun IconOnlyAction(
         modifier = Modifier
             .size(28.dp)
             .clip(CircleShape)
-            .background(if (enabled) Color.White.copy(alpha = 0.72f) else Color.White.copy(alpha = 0.35f))
+            .background(
+                if (enabled) AetherSurface.copy(alpha = 0.72f) else AetherSurface.copy(alpha = 0.35f)
+            )
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -2025,20 +2051,20 @@ private fun formatThoughtDuration(durationMillis: Long): String {
     }
 }
 
-private fun formatAttachmentMetaLabel(attachment: ChatAttachment): String {
-    val typeLabel = if (attachment.kind == AttachmentKind.Image) "Photo" else "File"
+private fun formatAttachmentMetaLabel(strings: AetherStrings, attachment: ChatAttachment): String {
+    val typeLabel = strings.attachmentTypeLabel(attachment.kind == AttachmentKind.Image)
     val sizeLabel = attachment.sizeBytes?.let(::formatAttachmentSize)
     return listOfNotNull(typeLabel, sizeLabel).joinToString(" | ")
 }
 
-private fun formatComposerAttachmentMetaLabel(attachment: ChatAttachment): String {
+private fun formatComposerAttachmentMetaLabel(strings: AetherStrings, attachment: ChatAttachment): String {
     val statusLabel = when (attachment.workspaceState) {
-        AttachmentWorkspaceState.Pending -> "Copying to workspace"
-        AttachmentWorkspaceState.Failed -> "Workspace copy failed"
+        AttachmentWorkspaceState.Pending -> if (strings.appLanguage == AppLanguage.SimplifiedChinese) "正在复制到工作区" else "Copying to workspace"
+        AttachmentWorkspaceState.Failed -> if (strings.appLanguage == AppLanguage.SimplifiedChinese) "工作区复制失败" else "Workspace copy failed"
         AttachmentWorkspaceState.Ready -> null
     }
     return listOfNotNull(
-        formatAttachmentMetaLabel(attachment).ifBlank { null },
+        formatAttachmentMetaLabel(strings, attachment).ifBlank { null },
         statusLabel,
     ).joinToString(" | ")
 }
@@ -2156,13 +2182,13 @@ private fun formatToolInvocationGroupTitle(
     "Executed $count tools"
 }
 
-private fun formatToolInvocationDetail(toolInvocation: ChatToolInvocation): ToolInvocationDetail {
+private fun formatToolInvocationDetail(strings: AetherStrings, toolInvocation: ChatToolInvocation): ToolInvocationDetail {
     val arguments = parseJsonObject(toolInvocation.argumentsJson)
     val output = parseJsonObject(toolInvocation.outputJson)
     val command = output?.optString("command")
         .orEmpty()
         .trim()
-        .ifBlank { summarizeToolInvocationCommandLabel(toolInvocation.toolName, arguments) }
+        .ifBlank { strings.toolInvocationCommandLabel(toolInvocation.toolName, arguments) }
         .ifBlank { toolInvocation.toolName }
 
     if (toolInvocation.isRunning) {
@@ -2173,9 +2199,9 @@ private fun formatToolInvocationDetail(toolInvocation: ChatToolInvocation): Tool
     }
 
     val result = when {
-        output == null -> toolInvocation.outputJson.trim().ifBlank { "No output" }
+        output == null -> toolInvocation.outputJson.trim().ifBlank { strings.noOutput }
         toolInvocation.toolName.equals("fetch_web_url", ignoreCase = true) -> {
-            formatFetchWebUrlResult(output)
+            formatFetchWebUrlResult(strings, output)
         }
         output.optString("stdout").trim().isNotBlank() &&
             output.optString("stderr").trim().isNotBlank() -> {
@@ -2190,8 +2216,8 @@ private fun formatToolInvocationDetail(toolInvocation: ChatToolInvocation): Tool
         output.optString("stderr").trim().isNotBlank() -> output.optString("stderr").trim()
         output.optString("errmsg").trim().isNotBlank() -> output.optString("errmsg").trim()
         output.optString("hint").trim().isNotBlank() -> output.optString("hint").trim()
-        output.has("exit_code") && output.optInt("exit_code") != 0 -> "Exit code: ${output.optInt("exit_code")}"
-        else -> "No output"
+        output.has("exit_code") && output.optInt("exit_code") != 0 -> if (strings.appLanguage == AppLanguage.SimplifiedChinese) "退出代码：${output.optInt("exit_code")}" else "Exit code: ${output.optInt("exit_code")}"
+        else -> strings.noOutput
     }
 
     return ToolInvocationDetail(
@@ -2200,7 +2226,7 @@ private fun formatToolInvocationDetail(toolInvocation: ChatToolInvocation): Tool
     )
 }
 
-private fun formatFetchWebUrlResult(output: JSONObject): String {
+private fun formatFetchWebUrlResult(strings: AetherStrings, output: JSONObject): String {
     val markdown = output.optString("markdown").trim()
     if (markdown.isNotBlank()) {
         return buildString {
@@ -2209,12 +2235,12 @@ private fun formatFetchWebUrlResult(output: JSONObject): String {
             if (output.optBoolean("truncated")) {
                 appendLine()
                 appendLine()
-                append("[content truncated]")
+                append(strings.contentTruncated)
             }
         }.trim()
     }
 
-    return output.optString("stdout").trim().ifBlank { "No output" }
+    return output.optString("stdout").trim().ifBlank { strings.noOutput }
 }
 
 private fun summarizeToolInvocationCommand(

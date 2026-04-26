@@ -32,6 +32,8 @@ class SettingsRepository(
                 preferences[AGENT_MODE_AUTHORIZATION_METHOD],
                 defaultValue = defaultAgentModeAuthorizationMethod(context),
             ),
+            language = AppLanguage.fromStorage(preferences[LANGUAGE]),
+            themeMode = AppThemeMode.fromStorage(preferences[THEME_MODE]),
             onboardingSeenVersion = preferences[ONBOARDING_SEEN_VERSION] ?: 0,
             onboardingCompletedVersion = preferences[ONBOARDING_COMPLETED_VERSION] ?: 0,
         )
@@ -116,6 +118,8 @@ class SettingsRepository(
             it[NOTIFY_ON_TASK_COMPLETION] = settings.notifyOnTaskCompletion
             it[AGENT_MODE_AUTHORIZATION_ENABLED] = settings.agentModeAuthorizationEnabled
             it[AGENT_MODE_AUTHORIZATION_METHOD] = settings.agentModeAuthorizationMethod.storageValue
+            it[LANGUAGE] = settings.language.storageValue
+            it[THEME_MODE] = settings.themeMode.storageValue
             it[ONBOARDING_SEEN_VERSION] = settings.onboardingSeenVersion
             it[ONBOARDING_COMPLETED_VERSION] = settings.onboardingCompletedVersion
             it[PROVIDER_CONFIGS] = serializeProviderConfigs(providerConfigs)
@@ -142,6 +146,14 @@ class SettingsRepository(
         context.dataStore.edit { it[TAVILY_API_KEY] = value }
     }
 
+    suspend fun updateLanguage(language: AppLanguage) {
+        context.dataStore.edit { it[LANGUAGE] = language.storageValue }
+    }
+
+    suspend fun updateThemeMode(themeMode: AppThemeMode) {
+        context.dataStore.edit { it[THEME_MODE] = themeMode.storageValue }
+    }
+
     suspend fun updateSettings(settings: AppSettings) {
         context.dataStore.edit {
             it[PROVIDER] = settings.provider.storageValue
@@ -158,6 +170,8 @@ class SettingsRepository(
             it[NOTIFY_ON_TASK_COMPLETION] = settings.notifyOnTaskCompletion
             it[AGENT_MODE_AUTHORIZATION_ENABLED] = settings.agentModeAuthorizationEnabled
             it[AGENT_MODE_AUTHORIZATION_METHOD] = settings.agentModeAuthorizationMethod.storageValue
+            it[LANGUAGE] = settings.language.storageValue
+            it[THEME_MODE] = settings.themeMode.storageValue
         }
     }
 
@@ -190,6 +204,8 @@ class SettingsRepository(
             booleanPreferencesKey("agent_mode_authorization_enabled")
         val AGENT_MODE_AUTHORIZATION_METHOD =
             stringPreferencesKey("agent_mode_authorization_method")
+        val LANGUAGE = stringPreferencesKey("language")
+        val THEME_MODE = stringPreferencesKey("theme_mode")
         val PROVIDER_CONFIGS = stringPreferencesKey("provider_configs")
         val ONBOARDING_SEEN_VERSION = intPreferencesKey("onboarding_seen_version")
         val ONBOARDING_COMPLETED_VERSION = intPreferencesKey("onboarding_completed_version")
