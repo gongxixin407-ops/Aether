@@ -121,10 +121,12 @@ class SessionExecutionManager(
         _executionStates.value[sessionId]?.isRunning == true
 
     fun startTurn(request: SessionTurnRequest) {
-        if (executionHandles.containsKey(request.sessionId)) return
+        val handle = SessionExecutionHandle(sessionId = request.sessionId)
+        if (executionHandles.putIfAbsent(request.sessionId, handle) != null) return
 
         val validationError = validateRequest(request)
         if (validationError != null) {
+            executionHandles.remove(request.sessionId, handle)
             val completion = appendAgentMessage(
                 sessionId = request.sessionId,
                 blocks = listOf(
@@ -140,8 +142,6 @@ class SessionExecutionManager(
             return
         }
 
-        val handle = SessionExecutionHandle(sessionId = request.sessionId)
-        executionHandles[request.sessionId] = handle
         updateExecutionState(request.sessionId) {
             it.copy(
                 sessionId = request.sessionId,

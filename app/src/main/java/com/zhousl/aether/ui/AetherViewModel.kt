@@ -2,7 +2,6 @@ package com.zhousl.aether.ui
 
 import android.app.Application
 import android.net.Uri
-import android.os.SystemClock
 import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -11,23 +10,14 @@ import com.zhousl.aether.BuildConfig
 import com.zhousl.aether.aetherRuntime
 import com.zhousl.aether.data.ActiveSkillContext
 import com.zhousl.aether.data.AppUpdateManager
-import com.zhousl.aether.data.AppUpdateRelease
 import com.zhousl.aether.data.AutomaticModelPurpose
-import com.zhousl.aether.data.AgentModeDisplayState
-import com.zhousl.aether.data.AgentModeAuthorizationState
 import com.zhousl.aether.data.AgentModeAuthorizationMethod
-import com.zhousl.aether.data.AgentExtensionsRepository
-import com.zhousl.aether.data.AgentSkillManager
 import com.zhousl.aether.data.AppLanguage
 import com.zhousl.aether.data.AppSettings
 import com.zhousl.aether.data.AppThemeMode
-import com.zhousl.aether.data.AetherAgent
 import com.zhousl.aether.data.CurrentOnboardingVersion
 import com.zhousl.aether.data.InstalledSkill
 import com.zhousl.aether.data.LlmApiClient
-import com.zhousl.aether.data.LlmContentPart
-import com.zhousl.aether.data.LlmMessage
-import com.zhousl.aether.data.LlmTextPart
 import com.zhousl.aether.data.LlmProvider
 import com.zhousl.aether.data.LlmProviderConfig
 import com.zhousl.aether.data.ProviderModelOption
@@ -38,21 +28,16 @@ import com.zhousl.aether.data.McpServerConfig
 import com.zhousl.aether.data.normalizeLlmInactivityReconnectTimeoutSeconds
 import com.zhousl.aether.data.OnboardingStarterPrompt
 import com.zhousl.aether.data.OpenAiCompatibleClient
-import com.zhousl.aether.data.PendingSessionInput
 import com.zhousl.aether.data.RootSetupIssue
 import com.zhousl.aether.data.RootSetupState
-import com.zhousl.aether.data.SessionExecutionState
 import com.zhousl.aether.data.SessionFollowUpMode
 import com.zhousl.aether.data.SessionTurnEvent
 import com.zhousl.aether.data.SessionTurnOutcome
 import com.zhousl.aether.data.SessionTurnRequest
-import com.zhousl.aether.data.WebToolsClient
-import com.zhousl.aether.data.WorkspaceFileBridge
 import com.zhousl.aether.data.parseChatSessions
 import com.zhousl.aether.data.parseInstalledSkills
 import com.zhousl.aether.data.parseMcpServerConfigs
 import com.zhousl.aether.data.parseProviderConfigs
-import com.zhousl.aether.data.requiresApiKey
 import com.zhousl.aether.data.serializeChatSessions
 import com.zhousl.aether.data.serializeInstalledSkills
 import com.zhousl.aether.data.serializeMcpServerConfigs
@@ -66,12 +51,8 @@ import com.zhousl.aether.data.shouldLaunchOnboarding
 import com.zhousl.aether.data.shouldRevealFollowUpTourCard
 import com.zhousl.aether.data.resolveAutomaticModelKey
 import com.zhousl.aether.data.withModelOption
-import com.zhousl.aether.termux.TermuxBashTool
 import com.zhousl.aether.termux.TermuxSetupState
-import kotlin.coroutines.coroutineContext
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -84,173 +65,10 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
-private const val DraftSessionId = "draft"
 private const val FollowUpTourAutoOpenDelayMillis = 2_500L
 private const val AppUpdateCheckIntervalMillis = 3L * 24L * 60L * 60L * 1000L
 private const val SessionTitleSystemPrompt =
     "Generate a concise chat title for this conversation. Return only the title, in the user's language when possible, with no quotes, no emoji, and at most 6 words."
-
-enum class AppScreen {
-    Onboarding,
-    Chat,
-    Settings,
-}
-
-enum class OnboardingStep {
-    Landing,
-    ProviderSetup,
-    TermuxSetup,
-    AgentModeAuthorization,
-    TavilySetup,
-    SkillsOverview,
-    McpOverview,
-}
-
-private enum class AssistantResponseOutcome {
-    Success,
-    ValidationError,
-    Failure,
-    Neutral,
-}
-
-enum class MessageAuthor {
-    User,
-    Agent,
-}
-
-enum class AttachmentKind {
-    Image,
-    File;
-
-    companion object {
-        fun fromStored(
-            value: String,
-            mimeType: String,
-        ): AttachmentKind = when {
-            value == Image.name -> Image
-            value == File.name -> File
-            mimeType.startsWith("image/") -> Image
-            else -> File
-        }
-    }
-}
-
-enum class AttachmentWorkspaceState {
-    Pending,
-    Ready,
-    Failed,
-}
-
-data class ChatAttachment(
-    val id: String,
-    val uri: String,
-    val name: String,
-    val mimeType: String,
-    val sizeBytes: Long?,
-    val kind: AttachmentKind,
-    val workspacePath: String = "",
-    val workspaceState: AttachmentWorkspaceState = AttachmentWorkspaceState.Ready,
-    val workspaceError: String = "",
-)
-
-data class ChatToolInvocation(
-    val id: String,
-    val toolName: String,
-    val argumentsJson: String,
-    val outputJson: String = "",
-    val isRunning: Boolean = false,
-    val startedAtUptimeMillis: Long = 0L,
-    val completedAtUptimeMillis: Long? = null,
-)
-
-sealed interface AssistantResponseBlock {
-    val id: String
-
-    data class Text(
-        override val id: String,
-        val text: String,
-    ) : AssistantResponseBlock
-
-    data class ToolGroup(
-        override val id: String,
-        val toolInvocations: List<ChatToolInvocation>,
-    ) : AssistantResponseBlock
-}
-
-data class ChatMessage(
-    val id: String,
-    val author: MessageAuthor,
-    val text: String,
-    val createdAtMillis: Long = 0L,
-    val attachments: List<ChatAttachment> = emptyList(),
-    val toolInvocations: List<ChatToolInvocation> = emptyList(),
-    val thoughtDurationMillis: Long? = null,
-    val branchGroup: ChatBranchGroup? = null,
-    val responseGroupId: String? = null,
-    val assistantActionsHidden: Boolean = false,
-)
-
-data class ChatSession(
-    val id: String,
-    val title: String,
-    val preview: String,
-    val hasCustomTitle: Boolean = false,
-    val messages: List<ChatMessage>,
-    val selectedSkillIds: List<String> = emptyList(),
-    val activeSkills: List<ActiveSkillContext> = emptyList(),
-    val activeMcpServerIds: List<String> = emptyList(),
-    val agentModeEnabled: Boolean = false,
-    val selectedModelKey: String = "",
-)
-
-data class AppUpdateUiState(
-    val isChecking: Boolean = false,
-    val isDownloading: Boolean = false,
-    val downloadProgress: Float? = null,
-    val availableRelease: AppUpdateRelease? = null,
-    val showAvailableDialog: Boolean = false,
-    val pendingInstallUri: String = "",
-)
-
-data class AetherUiState(
-    val currentScreen: AppScreen = AppScreen.Chat,
-    val isStartupRouteResolved: Boolean = false,
-    val isOnboardingReplay: Boolean = false,
-    val onboardingStep: OnboardingStep = OnboardingStep.Landing,
-    val onboardingReturnScreen: AppScreen = AppScreen.Chat,
-    val sessions: List<ChatSession> = emptyList(),
-    val currentSessionId: String = DraftSessionId,
-    val draftInput: String = "",
-    val draftAttachments: List<ChatAttachment> = emptyList(),
-    val draftSelectedModelKey: String = "",
-    val draftSelectedSkillIds: List<String> = emptyList(),
-    val draftSelectedMcpServerIds: List<String> = emptyList(),
-    val draftAgentModeEnabled: Boolean = false,
-    val draftWorkspaceId: String? = null,
-    val editingSessionId: String? = null,
-    val editingMessageId: String? = null,
-    val settings: AppSettings = AppSettings(),
-    val isSending: Boolean = false,
-    val pendingResponseSessionId: String? = null,
-    val pendingToolInvocations: List<ChatToolInvocation> = emptyList(),
-    val pendingResponseBlocks: List<AssistantResponseBlock> = emptyList(),
-    val pendingAssistantText: String = "",
-    val pendingStatusText: String = "",
-    val sessionExecutionStates: Map<String, SessionExecutionState> = emptyMap(),
-    val unviewedCompletedSessionIds: Set<String> = emptySet(),
-    val termuxSetupState: TermuxSetupState = TermuxSetupState(),
-    val rootSetupState: RootSetupState = RootSetupState(),
-    val installedSkills: List<InstalledSkill> = emptyList(),
-    val mcpServers: List<McpServerConfig> = emptyList(),
-    val providerConfigs: List<LlmProviderConfig> = emptyList(),
-    val isFetchingModels: Boolean = false,
-    val showStarterPromptHint: Boolean = false,
-    val awaitingFollowUpTour: Boolean = false,
-    val showFollowUpTourCard: Boolean = false,
-    val agentModeDisplayState: AgentModeDisplayState = AgentModeDisplayState(),
-    val agentModeAuthorizationState: AgentModeAuthorizationState = AgentModeAuthorizationState(),
-    val appUpdate: AppUpdateUiState = AppUpdateUiState(),
-)
 
 class AetherViewModel(
     application: Application,
@@ -267,21 +85,7 @@ class AetherViewModel(
     private val agentModeController = runtime.agentModeController
     private val skillManager = runtime.skillManager
     private val mcpClientManager = McpClientManager(bashTool = bashTool)
-    private val webToolsClient = runtime.webToolsClient
     private val appUpdateManager = AppUpdateManager(application.applicationContext)
-    private val agent = AetherAgent(
-        client = client,
-        bashTool = bashTool,
-        workspaceFileBridge = workspaceFileBridge,
-        agentModeController = agentModeController,
-        skillManager = skillManager,
-        mcpClientManager = mcpClientManager,
-        webToolsClient = webToolsClient,
-        onParallelToolCallsUnsupported = settingsRepository::markParallelToolCallsUnsupported,
-    )
-    private var activeGenerationJob: Job? = null
-    private var activeGenerationRequestId: Long? = null
-    private var activeGenerationStartedAtMillis: Long? = null
     private var didEvaluateStartupUpdateCheck = false
     private val _uiState = MutableStateFlow(AetherUiState())
     private val _transientMessages = MutableSharedFlow<String>(extraBufferCapacity = 4)
@@ -1404,7 +1208,7 @@ class AetherViewModel(
         }
     }
 
-    // ── Multi-Provider methods ───────────────────────────────────────────────
+    // 鈹€鈹€ Multi-Provider methods 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     fun updateAppLanguage(language: AppLanguage) {
         viewModelScope.launch {
@@ -2047,204 +1851,6 @@ class AetherViewModel(
         }
     }
 
-    private fun requestAssistantReply(
-        sessionId: String,
-        requestMessages: List<ChatMessage>,
-        settings: AppSettings,
-        selectedSkillIds: List<String>,
-        activeSkills: List<ActiveSkillContext>,
-        activeMcpServerIds: List<String>,
-    ) {
-        if (settings.provider.requiresApiKey && settings.apiKey.isBlank()) {
-            appendAgentMessage(
-                sessionId = sessionId,
-                text = "API Key is required before sending with ${settings.provider.displayName}.",
-                outcome = AssistantResponseOutcome.ValidationError,
-            )
-            return
-        }
-
-        if (settings.baseUrl.isBlank() || settings.modelId.isBlank()) {
-            appendAgentMessage(
-                sessionId = sessionId,
-                text = "Base URL and Model ID are required before sending.",
-                outcome = AssistantResponseOutcome.ValidationError,
-            )
-            return
-        }
-
-        val requestId = System.currentTimeMillis()
-        val workspaceDirectory = workspaceFileBridge.workspaceDirectory(sessionId)
-        activeGenerationRequestId = requestId
-        activeGenerationStartedAtMillis = System.currentTimeMillis()
-
-        val job = viewModelScope.launch {
-            val requestJob = coroutineContext[Job]
-            val startedAt = activeGenerationStartedAtMillis ?: System.currentTimeMillis()
-            val completedToolInvocations = LinkedHashMap<String, ChatToolInvocation>()
-
-            try {
-                var resolvedActiveSkills = resolveSelectedActiveSkills(
-                    selectedSkillIds = selectedSkillIds,
-                    existingActiveSkills = activeSkills,
-                )
-                var resolvedSelectedSkillIds = resolvedActiveSkills.map { it.skillId }
-                val resolvedAvailableSkills = _uiState.value.installedSkills
-                    .filter { it.isEnabled }
-                    .sortedBy { it.name.lowercase() }
-                val resolvedMcpServers = resolveSelectedMcpServers(activeMcpServerIds)
-                val resolvedMcpServerIds = resolvedMcpServers.map { it.id }
-                setSessionSelectedSkillIds(sessionId, resolvedSelectedSkillIds)
-                setSessionActiveSkills(sessionId, resolvedActiveSkills)
-                setSessionActiveMcpServerIds(sessionId, resolvedMcpServerIds)
-                mcpClientManager.syncServers(
-                    servers = resolvedMcpServers,
-                    workspaceDirectory = workspaceDirectory,
-                )
-
-                val result = agent.runTurn(
-                    settings = settings,
-                    messages = buildRequestMessages(requestMessages),
-                    workspaceDirectory = workspaceDirectory,
-                    availableSkills = resolvedAvailableSkills,
-                    activeSkills = resolvedActiveSkills,
-                    mcpToolBindings = mcpClientManager.toolBindings(),
-                    agentModeEnabled = false,
-                    onToolEvent = toolEvent@{ event ->
-                        if (!isActiveGeneration(requestId)) return@toolEvent
-
-                        val toolEventUptimeMillis = SystemClock.uptimeMillis()
-                        val toolInvocation = ChatToolInvocation(
-                            id = event.id,
-                            toolName = event.name,
-                            argumentsJson = event.argumentsJson,
-                            outputJson = event.outputJson.orEmpty(),
-                            isRunning = event.outputJson == null,
-                            startedAtUptimeMillis = toolEventUptimeMillis,
-                            completedAtUptimeMillis = if (event.outputJson == null) {
-                                null
-                            } else {
-                                toolEventUptimeMillis
-                            },
-                        )
-                        if (!toolInvocation.isRunning) {
-                            completedToolInvocations[toolInvocation.id] = toolInvocation
-                        }
-                        pushPendingToolInvocation(
-                            sessionId = sessionId,
-                            toolInvocation = toolInvocation,
-                        )
-                    },
-                    onAssistantTextDelta = textEvent@{ delta ->
-                        if (!isActiveGeneration(requestId)) return@textEvent
-                        appendPendingAssistantText(
-                            sessionId = sessionId,
-                            delta = delta,
-                        )
-                    },
-                    onAssistantTextReset = resetText@{
-                        if (!isActiveGeneration(requestId)) return@resetText
-                        clearPendingAssistantText(sessionId)
-                    },
-                    onStreamingStatus = statusEvent@{ status ->
-                        if (!isActiveGeneration(requestId)) return@statusEvent
-                        setPendingStatusText(sessionId, status)
-                    },
-                    onSkillActivated = skillEvent@{ activeSkill ->
-                        if (!isActiveGeneration(requestId)) return@skillEvent
-                        resolvedSelectedSkillIds = (resolvedSelectedSkillIds + activeSkill.skillId).distinct()
-                        resolvedActiveSkills = upsertActiveSkillContext(resolvedActiveSkills, activeSkill)
-                        setSessionSelectedSkillIds(sessionId, resolvedSelectedSkillIds)
-                        setSessionActiveSkills(sessionId, resolvedActiveSkills)
-                    },
-                )
-                if (!isActiveGeneration(requestId)) return@launch
-
-                val thoughtDurationMillis = (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
-                result.fold(
-                    onSuccess = { reply ->
-                        appendAgentMessage(
-                            sessionId = sessionId,
-                            text = reply,
-                            toolInvocations = completedToolInvocations.values.toList(),
-                            thoughtDurationMillis = thoughtDurationMillis,
-                            outcome = AssistantResponseOutcome.Success,
-                        )
-                    },
-                    onFailure = { throwable ->
-                        appendAgentMessage(
-                            sessionId = sessionId,
-                            text = "Request failed: ${throwable.message ?: "Unknown error"}",
-                            toolInvocations = completedToolInvocations.values.toList(),
-                            thoughtDurationMillis = thoughtDurationMillis,
-                            outcome = AssistantResponseOutcome.Failure,
-                        )
-                    },
-                )
-            } catch (_: CancellationException) {
-                if (isActiveGeneration(requestId)) {
-                    clearPendingGenerationState()
-                }
-            } finally {
-                if (activeGenerationRequestId == requestId && activeGenerationJob === requestJob) {
-                    activeGenerationRequestId = null
-                    activeGenerationJob = null
-                    activeGenerationStartedAtMillis = null
-                }
-            }
-        }
-
-        activeGenerationJob?.cancel()
-        activeGenerationJob = job
-    }
-
-    private fun buildRequestMessages(messages: List<ChatMessage>): List<LlmMessage> =
-        messages.map { message ->
-            val parts = mutableListOf<LlmContentPart>()
-
-            if (message.text.isNotBlank()) {
-                parts += LlmTextPart(message.text)
-            }
-
-            message.attachments.forEach { attachment ->
-                parts += buildWorkspaceAttachmentPart(attachment)
-            }
-
-            if (parts.isEmpty()) {
-                parts += LlmTextPart("[Empty message]")
-            }
-
-            LlmMessage(
-                role = if (message.author == MessageAuthor.User) "user" else "assistant",
-                contentParts = parts,
-            )
-        }
-
-    private fun buildWorkspaceAttachmentPart(attachment: ChatAttachment): LlmTextPart {
-        if (attachment.workspacePath.isBlank()) {
-            return LlmTextPart(
-                "Attached file '${attachment.name}' is missing a workspace path. Ask the user to re-upload it if you need to inspect the file."
-            )
-        }
-
-        val accessHint = if (attachment.kind == AttachmentKind.Image) {
-            "This image was copied into the workspace but was not passed to model vision automatically. Use analyze_image on this path if you need to inspect it."
-        } else {
-            "Inspect this file through read, grep, find, ls, or bash inside the workspace instead of assuming its contents."
-        }
-
-        return LlmTextPart(
-            buildString {
-                append("Workspace attachment:\n")
-                append("Name: ${attachment.name}\n")
-                append("Type: ${attachment.mimeType.ifBlank { "unknown" }}\n")
-                attachment.sizeBytes?.let { append("Size: ${formatBytes(it)}\n") }
-                append("Path: ${attachment.workspacePath}\n")
-                append(accessHint)
-            }
-        )
-    }
-
     private suspend fun buildPendingDraftAttachment(
         uri: Uri,
     ): ChatAttachment? {
@@ -2364,78 +1970,6 @@ class AetherViewModel(
             sizeBytes = sizeBytes,
             kind = if (mimeType.startsWith("image/")) AttachmentKind.Image else AttachmentKind.File,
         )
-    }
-
-    private fun appendAgentMessage(
-        sessionId: String,
-        text: String,
-        toolInvocations: List<ChatToolInvocation> = emptyList(),
-        thoughtDurationMillis: Long? = null,
-        outcome: AssistantResponseOutcome = AssistantResponseOutcome.Neutral,
-    ) {
-        var didUpdate = false
-
-        _uiState.update { current ->
-            val targetIndex = current.sessions.indexOfFirst { it.id == sessionId }
-            if (targetIndex < 0) {
-                current.copy(
-                    isSending = false,
-                    pendingResponseSessionId = null,
-                    pendingToolInvocations = emptyList(),
-                    pendingAssistantText = "",
-                    pendingStatusText = "",
-                )
-            } else {
-                val updatedSessions = current.sessions.toMutableList()
-                val target = updatedSessions.removeAt(targetIndex)
-                updatedSessions.add(
-                    0,
-                    target.withMessages(
-                        target.messages + ChatMessage(
-                            id = "agent-${System.currentTimeMillis()}",
-                            author = MessageAuthor.Agent,
-                            text = text,
-                            createdAtMillis = System.currentTimeMillis(),
-                            toolInvocations = toolInvocations,
-                            thoughtDurationMillis = thoughtDurationMillis,
-                        )
-                    ),
-                )
-                didUpdate = true
-                current.copy(
-                    sessions = updatedSessions,
-                    isSending = false,
-                    pendingResponseSessionId = null,
-                    pendingToolInvocations = emptyList(),
-                    pendingAssistantText = "",
-                    pendingStatusText = "",
-                    showStarterPromptHint = false,
-                )
-            }
-        }
-
-        if (didUpdate) {
-            persistChats()
-            val isSuccessfulAssistantReply = outcome == AssistantResponseOutcome.Success
-            if (
-                shouldMarkOnboardingCompleted(
-                    settings = _uiState.value.settings,
-                    isSuccessfulAssistantReply = isSuccessfulAssistantReply,
-                )
-            ) {
-                viewModelScope.launch {
-                    settingsRepository.updateOnboardingCompletedVersion(CurrentOnboardingVersion)
-                }
-            }
-            if (
-                shouldRevealFollowUpTourCard(
-                    isAwaitingFollowUpTour = _uiState.value.awaitingFollowUpTour,
-                    isSuccessfulAssistantReply = isSuccessfulAssistantReply,
-                )
-            ) {
-                scheduleFollowUpTourAfterFirstReply()
-            }
-        }
     }
 
     private fun scheduleFollowUpTourAfterFirstReply() {
@@ -2939,112 +2473,13 @@ class AetherViewModel(
                 line.trim()
                     .removePrefix("Title:")
                     .removePrefix("title:")
-                    .removePrefix("标题：")
-                    .removePrefix("标题:")
                     .trim()
-                    .trim('"', '\'', '“', '”', '`')
+                    .trim('"', '\'', '`')
             }
             .firstOrNull { it.isNotBlank() }
             .orEmpty()
-            .trimEnd('.', '。', '!', '！', '?', '？')
+            .trimEnd('.', '!', '?')
             .take(36)
-    private fun pushPendingToolInvocation(
-        sessionId: String,
-        toolInvocation: ChatToolInvocation,
-    ) {
-        _uiState.update { current ->
-            current.copy(
-                pendingResponseSessionId = sessionId,
-                pendingToolInvocations = upsertToolInvocation(
-                    current.pendingToolInvocations,
-                    toolInvocation,
-                ),
-            )
-        }
-    }
-
-    private fun appendPendingAssistantText(
-        sessionId: String,
-        delta: String,
-    ) {
-        if (delta.isEmpty()) return
-
-        _uiState.update { current ->
-            if (current.pendingResponseSessionId != sessionId) {
-                current
-            } else {
-                current.copy(
-                    pendingStatusText = "",
-                    pendingAssistantText = current.pendingAssistantText + delta
-                )
-            }
-        }
-    }
-
-    private fun clearPendingAssistantText(
-        sessionId: String,
-    ) {
-        _uiState.update { current ->
-            if (current.pendingResponseSessionId != sessionId || current.pendingAssistantText.isEmpty()) {
-                current
-            } else {
-                current.copy(pendingAssistantText = "")
-            }
-        }
-    }
-
-    private fun setPendingStatusText(
-        sessionId: String,
-        status: String?,
-    ) {
-        _uiState.update { current ->
-            if (current.pendingResponseSessionId != sessionId) {
-                current
-            } else {
-                current.copy(pendingStatusText = status.orEmpty())
-            }
-        }
-    }
-
-    private fun upsertToolInvocation(
-        invocations: List<ChatToolInvocation>,
-        toolInvocation: ChatToolInvocation,
-    ): List<ChatToolInvocation> {
-        val now = SystemClock.uptimeMillis()
-        val existingIndex = invocations.indexOfFirst { it.id == toolInvocation.id }
-        val normalized = if (existingIndex < 0) {
-            toolInvocation.copy(
-                startedAtUptimeMillis = toolInvocation.startedAtUptimeMillis.takeIf { it > 0L } ?: now,
-                completedAtUptimeMillis = if (toolInvocation.isRunning) {
-                    null
-                } else {
-                    toolInvocation.completedAtUptimeMillis ?: now
-                },
-            )
-        } else {
-            val existing = invocations[existingIndex]
-            toolInvocation.copy(
-                startedAtUptimeMillis = existing.startedAtUptimeMillis
-                    .takeIf { it > 0L }
-                    ?: toolInvocation.startedAtUptimeMillis.takeIf { it > 0L }
-                    ?: now,
-                completedAtUptimeMillis = if (toolInvocation.isRunning) {
-                    null
-                } else {
-                    toolInvocation.completedAtUptimeMillis
-                        ?: existing.completedAtUptimeMillis
-                        ?: now
-                },
-            )
-        }
-        if (existingIndex < 0) {
-            return invocations + normalized
-        }
-
-        return invocations.toMutableList().apply {
-            set(existingIndex, normalized)
-        }
-    }
 
     private fun ensureDraftWorkspaceId(): String {
         val snapshot = _uiState.value
@@ -3064,83 +2499,6 @@ class AetherViewModel(
             }
         }
     }
-
-    private fun clearPendingGenerationState() {
-        _uiState.update { current ->
-            current.copy(
-                isSending = false,
-                pendingResponseSessionId = null,
-                pendingToolInvocations = emptyList(),
-                pendingAssistantText = "",
-                pendingStatusText = "",
-            )
-        }
-    }
-
-    private fun finalizeInterruptedToolInvocations(
-        invocations: List<ChatToolInvocation>,
-    ): List<ChatToolInvocation> = invocations.map { invocation ->
-        if (!isInterruptedToolInvocation(invocation)) {
-            invocation
-        } else {
-            invocation.copy(
-                isRunning = false,
-                outputJson = buildInterruptedToolOutput(invocation),
-                completedAtUptimeMillis = invocation.completedAtUptimeMillis ?: SystemClock.uptimeMillis(),
-            )
-        }
-    }
-
-    private fun isInterruptedToolInvocation(invocation: ChatToolInvocation): Boolean {
-        if (invocation.isRunning) return true
-        if (invocation.toolName.lowercase() != "bash") return false
-        val output = parseJsonObject(invocation.outputJson) ?: return false
-        return output.optString("status") == "running" || output.optString("status") == "launching"
-    }
-
-    private fun buildInterruptedToolOutput(invocation: ChatToolInvocation): String {
-        val output = parseJsonObject(invocation.outputJson) ?: JSONObject()
-        output.put("ok", false)
-        output.put("status", "cancelled")
-        output.put("running", false)
-        output.put("completed", true)
-        if (!output.has("stdout")) {
-            output.put("stdout", "")
-        }
-        if (!output.has("stderr")) {
-            output.put("stderr", "")
-        }
-        if (!output.has("exit_code")) {
-            output.put("exit_code", 143)
-        }
-        if (!output.has("err")) {
-            output.put("err", -1)
-        }
-        output.put("errmsg", "Stopped by user.")
-        return output.toString()
-    }
-
-    private fun extractActiveManagedRunIds(
-        invocations: List<ChatToolInvocation>,
-    ): List<String> = invocations.mapNotNull { invocation ->
-        if (invocation.toolName.lowercase() != "bash") return@mapNotNull null
-        val output = parseJsonObject(invocation.outputJson) ?: return@mapNotNull null
-        val status = output.optString("status")
-        if (status != "running" && status != "launching") {
-            return@mapNotNull null
-        }
-        output.optString("run_id").trim().ifBlank { null }
-    }.distinct()
-
-    private fun parseJsonObject(rawValue: String): JSONObject? =
-        if (rawValue.isBlank()) {
-            null
-        } else {
-            runCatching { JSONObject(rawValue) }.getOrNull()
-        }
-
-    private fun isActiveGeneration(requestId: Long): Boolean =
-        activeGenerationRequestId == requestId
 
     private fun ChatMessage.summaryText(): String {
         val textSummary = text.trim()

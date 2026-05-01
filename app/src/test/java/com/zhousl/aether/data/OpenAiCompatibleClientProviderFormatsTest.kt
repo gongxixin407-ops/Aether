@@ -6,10 +6,33 @@ import okhttp3.mockwebserver.MockWebServer
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OpenAiCompatibleClientProviderFormatsTest {
     private val client = OpenAiCompatibleClient()
+
+    @Test
+    fun officialOpenAiEndpointRequiresApiKeyBeforeRequest() = runBlocking {
+        val result = client.createChatCompletion(
+            settings = AppSettings(
+                provider = LlmProvider.OpenAiCompatible,
+                apiKey = "",
+                baseUrl = "https://api.openai.com/v1",
+                modelId = "gpt-5.4",
+            ),
+            systemPrompt = "",
+            conversation = listOf(
+                JSONObject().apply {
+                    put("role", "user")
+                    put("content", "Hello")
+                }
+            ),
+        )
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("API Key"))
+    }
 
     @Test
     fun basicCompatibilityModeUsesMinimalChatCompletionTools() = runBlocking {

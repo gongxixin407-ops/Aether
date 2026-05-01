@@ -358,7 +358,7 @@ fun ProviderConfigurationForm(
         }
 
         Text(
-            text = if (selectedProvider.requiresApiKey) {
+            text = if (selectedProvider.requiresApiKey(state.baseUrl)) {
                 "Enabled models appear in the chat model picker. This request format requires an API key."
             } else {
                 "Enabled models appear in the chat model picker. Refresh loads models from the provider API."

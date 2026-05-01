@@ -607,7 +607,7 @@ private fun ProviderSetupStep(
     }
     val canContinueFromCredentials = provider != null &&
         formState.baseUrl.trim().isNotBlank() &&
-        (!provider.requiresApiKey || formState.apiKey.trim().isNotBlank())
+        (!provider.requiresApiKey(formState.baseUrl) || formState.apiKey.trim().isNotBlank())
 
     val message = when (stage) {
         ProviderTourStage.PickProvider -> if (strings.appLanguage == AppLanguage.SimplifiedChinese) "首先，我们来选择你的模型提供方。" else "First, let's choose your model provider."
@@ -727,7 +727,7 @@ private fun ProviderSetupStep(
                         MinimalInputField(
                             label = if (strings.appLanguage == AppLanguage.SimplifiedChinese) "API 密钥" else "API key",
                             value = formState.apiKey,
-                            placeholder = if (provider?.requiresApiKey == true) {
+                            placeholder = if (provider?.requiresApiKey(formState.baseUrl) == true) {
                                 if (strings.appLanguage == AppLanguage.SimplifiedChinese) "此格式需要" else "Required for this format"
                             } else {
                                 if (strings.appLanguage == AppLanguage.SimplifiedChinese) "可选" else "Optional"

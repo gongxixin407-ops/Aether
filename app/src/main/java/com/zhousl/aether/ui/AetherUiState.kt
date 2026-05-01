@@ -1,0 +1,170 @@
+package com.zhousl.aether.ui
+
+import com.zhousl.aether.data.ActiveSkillContext
+import com.zhousl.aether.data.AgentModeAuthorizationState
+import com.zhousl.aether.data.AgentModeDisplayState
+import com.zhousl.aether.data.AppSettings
+import com.zhousl.aether.data.AppUpdateRelease
+import com.zhousl.aether.data.InstalledSkill
+import com.zhousl.aether.data.LlmProviderConfig
+import com.zhousl.aether.data.McpServerConfig
+import com.zhousl.aether.data.RootSetupState
+import com.zhousl.aether.data.SessionExecutionState
+import com.zhousl.aether.termux.TermuxSetupState
+
+internal const val DraftSessionId = "draft"
+
+enum class AppScreen {
+    Onboarding,
+    Chat,
+    Settings,
+}
+
+enum class OnboardingStep {
+    Landing,
+    ProviderSetup,
+    TermuxSetup,
+    AgentModeAuthorization,
+    TavilySetup,
+    SkillsOverview,
+    McpOverview,
+}
+
+enum class MessageAuthor {
+    User,
+    Agent,
+}
+
+enum class AttachmentKind {
+    Image,
+    File;
+
+    companion object {
+        fun fromStored(
+            value: String,
+            mimeType: String,
+        ): AttachmentKind = when {
+            value == Image.name -> Image
+            value == File.name -> File
+            mimeType.startsWith("image/") -> Image
+            else -> File
+        }
+    }
+}
+
+enum class AttachmentWorkspaceState {
+    Pending,
+    Ready,
+    Failed,
+}
+
+data class ChatAttachment(
+    val id: String,
+    val uri: String,
+    val name: String,
+    val mimeType: String,
+    val sizeBytes: Long?,
+    val kind: AttachmentKind,
+    val workspacePath: String = "",
+    val workspaceState: AttachmentWorkspaceState = AttachmentWorkspaceState.Ready,
+    val workspaceError: String = "",
+)
+
+data class ChatToolInvocation(
+    val id: String,
+    val toolName: String,
+    val argumentsJson: String,
+    val outputJson: String = "",
+    val isRunning: Boolean = false,
+    val startedAtUptimeMillis: Long = 0L,
+    val completedAtUptimeMillis: Long? = null,
+)
+
+sealed interface AssistantResponseBlock {
+    val id: String
+
+    data class Text(
+        override val id: String,
+        val text: String,
+    ) : AssistantResponseBlock
+
+    data class ToolGroup(
+        override val id: String,
+        val toolInvocations: List<ChatToolInvocation>,
+    ) : AssistantResponseBlock
+}
+
+data class ChatMessage(
+    val id: String,
+    val author: MessageAuthor,
+    val text: String,
+    val createdAtMillis: Long = 0L,
+    val attachments: List<ChatAttachment> = emptyList(),
+    val toolInvocations: List<ChatToolInvocation> = emptyList(),
+    val thoughtDurationMillis: Long? = null,
+    val branchGroup: ChatBranchGroup? = null,
+    val responseGroupId: String? = null,
+    val assistantActionsHidden: Boolean = false,
+)
+
+data class ChatSession(
+    val id: String,
+    val title: String,
+    val preview: String,
+    val hasCustomTitle: Boolean = false,
+    val messages: List<ChatMessage>,
+    val selectedSkillIds: List<String> = emptyList(),
+    val activeSkills: List<ActiveSkillContext> = emptyList(),
+    val activeMcpServerIds: List<String> = emptyList(),
+    val agentModeEnabled: Boolean = false,
+    val selectedModelKey: String = "",
+)
+
+data class AppUpdateUiState(
+    val isChecking: Boolean = false,
+    val isDownloading: Boolean = false,
+    val downloadProgress: Float? = null,
+    val availableRelease: AppUpdateRelease? = null,
+    val showAvailableDialog: Boolean = false,
+    val pendingInstallUri: String = "",
+)
+
+data class AetherUiState(
+    val currentScreen: AppScreen = AppScreen.Chat,
+    val isStartupRouteResolved: Boolean = false,
+    val isOnboardingReplay: Boolean = false,
+    val onboardingStep: OnboardingStep = OnboardingStep.Landing,
+    val onboardingReturnScreen: AppScreen = AppScreen.Chat,
+    val sessions: List<ChatSession> = emptyList(),
+    val currentSessionId: String = DraftSessionId,
+    val draftInput: String = "",
+    val draftAttachments: List<ChatAttachment> = emptyList(),
+    val draftSelectedModelKey: String = "",
+    val draftSelectedSkillIds: List<String> = emptyList(),
+    val draftSelectedMcpServerIds: List<String> = emptyList(),
+    val draftAgentModeEnabled: Boolean = false,
+    val draftWorkspaceId: String? = null,
+    val editingSessionId: String? = null,
+    val editingMessageId: String? = null,
+    val settings: AppSettings = AppSettings(),
+    val isSending: Boolean = false,
+    val pendingResponseSessionId: String? = null,
+    val pendingToolInvocations: List<ChatToolInvocation> = emptyList(),
+    val pendingResponseBlocks: List<AssistantResponseBlock> = emptyList(),
+    val pendingAssistantText: String = "",
+    val pendingStatusText: String = "",
+    val sessionExecutionStates: Map<String, SessionExecutionState> = emptyMap(),
+    val unviewedCompletedSessionIds: Set<String> = emptySet(),
+    val termuxSetupState: TermuxSetupState = TermuxSetupState(),
+    val rootSetupState: RootSetupState = RootSetupState(),
+    val installedSkills: List<InstalledSkill> = emptyList(),
+    val mcpServers: List<McpServerConfig> = emptyList(),
+    val providerConfigs: List<LlmProviderConfig> = emptyList(),
+    val isFetchingModels: Boolean = false,
+    val showStarterPromptHint: Boolean = false,
+    val awaitingFollowUpTour: Boolean = false,
+    val showFollowUpTourCard: Boolean = false,
+    val agentModeDisplayState: AgentModeDisplayState = AgentModeDisplayState(),
+    val agentModeAuthorizationState: AgentModeAuthorizationState = AgentModeAuthorizationState(),
+    val appUpdate: AppUpdateUiState = AppUpdateUiState(),
+)

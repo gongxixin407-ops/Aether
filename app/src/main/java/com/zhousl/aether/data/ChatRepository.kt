@@ -31,9 +31,14 @@ class ChatRepository(
     private val context: Context,
 ) {
     val chatState: Flow<PersistedChatState> = context.chatDataStore.data.map { preferences ->
+        val sessions = parseChatSessions(preferences[SESSIONS_JSON].orEmpty())
+        val storedSessionId = preferences[CURRENT_SESSION_ID] ?: DraftSessionId
         PersistedChatState(
-            sessions = parseChatSessions(preferences[SESSIONS_JSON].orEmpty()),
-            currentSessionId = preferences[CURRENT_SESSION_ID] ?: DraftSessionId,
+            sessions = sessions,
+            currentSessionId = storedSessionId
+                .takeIf { id -> id == DraftSessionId || sessions.any { it.id == id } }
+                ?: sessions.firstOrNull()?.id
+                ?: DraftSessionId,
         )
     }
 
@@ -79,8 +84,29 @@ internal fun parseChatSessions(rawValue: String): List<ChatSession> {
                 )
             }
         }
-    }.getOrDefault(emptyList())
+    }.getOrElse { throwable ->
+        listOf(corruptedChatStateSession(rawValue, throwable))
+    }
 }
+
+private fun corruptedChatStateSession(
+    rawValue: String,
+    throwable: Throwable,
+): ChatSession = ChatSession(
+    id = "corrupt-chat-state-${rawValue.hashCode()}",
+    title = "Chat storage needs recovery",
+    preview = "Stored chat data could not be parsed.",
+    hasCustomTitle = true,
+    messages = listOf(
+        ChatMessage(
+            id = "agent-corrupt-chat-state-${rawValue.hashCode()}",
+            author = MessageAuthor.Agent,
+            text = "Aether could not read the stored chat history (${throwable.javaClass.simpleName}). " +
+                "The app is showing this recovery placeholder instead of hiding the conversation list.",
+            createdAtMillis = 0L,
+        )
+    ),
+)
 
 internal fun serializeChatSessions(sessions: List<ChatSession>): String =
     JSONArray().apply {

@@ -56,8 +56,8 @@ class OnboardingLogicTest {
     }
 
     @Test
-    fun providerValidationRequiresVertexApiKeyButNotOpenAiCompatibleApiKey() {
-        assertTrue(
+    fun providerValidationRequiresApiKeyForOfficialOpenAiAndVertexEndpoints() {
+        assertFalse(
             isProviderSetupValid(
                 provider = LlmProvider.OpenAiCompatible,
                 apiKey = "",
@@ -71,6 +71,14 @@ class OnboardingLogicTest {
                 apiKey = "",
                 baseUrl = "https://aiplatform.googleapis.com/v1",
                 modelId = "gemini-2.5-flash",
+            )
+        )
+        assertTrue(
+            isProviderSetupValid(
+                provider = LlmProvider.OpenAiCompatible,
+                apiKey = "",
+                baseUrl = "http://10.0.2.2:11434/v1",
+                modelId = "local-model",
             )
         )
     }

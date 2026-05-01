@@ -184,12 +184,26 @@ fun isProviderSetupValid(
     modelId: String,
 ): Boolean {
     if (baseUrl.trim().isEmpty() || modelId.trim().isEmpty()) return false
-    if (provider.requiresApiKey && apiKey.trim().isEmpty()) return false
+    if (provider.requiresApiKey(baseUrl) && apiKey.trim().isEmpty()) return false
     return true
 }
 
 val LlmProvider.requiresApiKey: Boolean
     get() = this == LlmProvider.VertexExpress || this == LlmProvider.AnthropicMessages
+
+fun LlmProvider.requiresApiKey(baseUrl: String): Boolean =
+    requiresApiKey || usesOfficialOpenAiEndpoint(this, baseUrl)
+
+fun usesOfficialOpenAiEndpoint(
+    provider: LlmProvider,
+    baseUrl: String,
+): Boolean {
+    if (provider != LlmProvider.OpenAiResponses && provider != LlmProvider.OpenAiCompatible) return false
+    val host = runCatching {
+        URI(baseUrl.trim()).host.orEmpty().lowercase(Locale.US)
+    }.getOrDefault("")
+    return host == "api.openai.com"
+}
 
 val OfficialVertexPreviewModels: List<String> = listOf(
     "gemini-3.1-pro-preview",

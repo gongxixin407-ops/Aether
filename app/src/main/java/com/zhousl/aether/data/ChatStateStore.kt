@@ -12,23 +12,34 @@ class ChatStateStore(
     private val chatRepository: ChatRepository,
 ) {
     private val updateLock = Any()
-    private val persistenceQueue = Channel<PersistedChatState>(capacity = Channel.UNLIMITED)
+    private val persistenceQueue = Channel<PendingPersistedChatState>(capacity = Channel.CONFLATED)
     private val _state = MutableStateFlow(PersistedChatState())
+    private var localGeneration = 0L
+    private var persistedGeneration = 0L
 
     val state: StateFlow<PersistedChatState> = _state.asStateFlow()
 
     init {
         scope.launch {
             chatRepository.chatState.collect { persisted ->
-                _state.value = persisted
+                synchronized(updateLock) {
+                    if (localGeneration == persistedGeneration) {
+                        _state.value = persisted
+                    }
+                }
             }
         }
         scope.launch {
-            for (persisted in persistenceQueue) {
+            for (pending in persistenceQueue) {
                 chatRepository.updateChatState(
-                    sessions = persisted.sessions,
-                    currentSessionId = persisted.currentSessionId,
+                    sessions = pending.state.sessions,
+                    currentSessionId = pending.state.currentSessionId,
                 )
+                synchronized(updateLock) {
+                    if (pending.generation > persistedGeneration) {
+                        persistedGeneration = pending.generation
+                    }
+                }
             }
         }
     }
@@ -36,10 +47,21 @@ class ChatStateStore(
     fun update(
         transform: (PersistedChatState) -> PersistedChatState,
     ): PersistedChatState {
-        val updated = synchronized(updateLock) {
-            transform(_state.value).also { _state.value = it }
+        val pending = synchronized(updateLock) {
+            val updated = transform(_state.value)
+            localGeneration += 1
+            _state.value = updated
+            PendingPersistedChatState(
+                generation = localGeneration,
+                state = updated,
+            )
         }
-        persistenceQueue.trySend(updated)
-        return updated
+        persistenceQueue.trySend(pending)
+        return pending.state
     }
+
+    private data class PendingPersistedChatState(
+        val generation: Long,
+        val state: PersistedChatState,
+    )
 }

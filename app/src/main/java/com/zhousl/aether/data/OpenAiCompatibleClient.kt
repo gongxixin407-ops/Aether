@@ -688,6 +688,10 @@ class OpenAiCompatibleClient(
         stream: Boolean = false,
     ): Request {
         val endpoint = buildOpenAiResponsesEndpoint(settings.baseUrl)
+        val trimmedApiKey = settings.apiKey.trim()
+        if (settings.provider.requiresApiKey(settings.baseUrl) && trimmedApiKey.isBlank()) {
+            error("API Key is required for ${settings.provider.displayName}.")
+        }
         val payload = JSONObject().apply {
             put("model", settings.modelId.trim())
             put("store", false)
@@ -735,8 +739,8 @@ class OpenAiCompatibleClient(
                 }
             }
             .apply {
-                if (settings.apiKey.isNotBlank()) {
-                    addHeader("Authorization", "Bearer ${settings.apiKey.trim()}")
+                if (trimmedApiKey.isNotBlank()) {
+                    addHeader("Authorization", "Bearer $trimmedApiKey")
                 }
             }
             .post(payload.toString().toRequestBody(JsonMediaType))
@@ -753,6 +757,10 @@ class OpenAiCompatibleClient(
         stream: Boolean = false,
     ): Request {
         val endpoint = buildOpenAiChatCompletionEndpoint(settings.baseUrl)
+        val trimmedApiKey = settings.apiKey.trim()
+        if (settings.provider.requiresApiKey(settings.baseUrl) && trimmedApiKey.isBlank()) {
+            error("API Key is required for ${settings.provider.displayName}.")
+        }
         val payload = JSONObject().apply {
             put("model", settings.modelId.trim())
             put(
@@ -803,8 +811,8 @@ class OpenAiCompatibleClient(
                 }
             }
             .apply {
-                if (settings.apiKey.isNotBlank()) {
-                    addHeader("Authorization", "Bearer ${settings.apiKey.trim()}")
+                if (trimmedApiKey.isNotBlank()) {
+                    addHeader("Authorization", "Bearer $trimmedApiKey")
                 }
             }
             .post(payload.toString().toRequestBody(JsonMediaType))
@@ -2123,24 +2131,6 @@ private data class MutableAnthropicToolUseAccumulator(
     var hasInputJsonDeltas: Boolean = false,
 )
 
-data class ChatCompletionResult(
-    val assistantText: String,
-    val toolCalls: List<ChatCompletionToolCall>,
-    val assistantMessage: JSONObject,
-)
-
-data class ChatCompletionToolCall(
-    val id: String,
-    val name: String,
-    val arguments: String,
-)
-
-data class ChatCompletionToolResult(
-    val callId: String,
-    val name: String,
-    val output: String,
-)
-
 private data class HttpResponsePayload(
     val code: Int,
     val isSuccessful: Boolean,
@@ -2235,19 +2225,3 @@ private const val DefaultStreamingWriteTimeoutMillis = 30_000L
 private const val DefaultAnthropicMaxTokens = 4096
 private const val AnthropicVersion = "2023-06-01"
 private const val OpenAiResponsesItemsKey = "aether_response_items"
-
-sealed interface LlmContentPart
-
-data class LlmTextPart(
-    val text: String,
-) : LlmContentPart
-
-data class LlmImagePart(
-    val mimeType: String,
-    val base64Data: String,
-) : LlmContentPart
-
-data class LlmMessage(
-    val role: String,
-    val contentParts: List<LlmContentPart>,
-)
