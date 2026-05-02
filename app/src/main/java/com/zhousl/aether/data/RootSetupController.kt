@@ -10,6 +10,7 @@ import kotlinx.coroutines.withContext
 
 private const val RootProbeTimeoutMillis = 1_500L
 private const val RootSetupTimeoutMillis = 30_000L
+private const val TermuxLaunchForBackgroundMarker = "AETHER_TERMUX_LAUNCHED_FOR_BACKGROUND"
 
 enum class RootSetupIssue {
     Unknown,
@@ -27,6 +28,7 @@ data class RootSetupState(
     val detail: String = "",
     val rootAvailable: Boolean = false,
     val suPath: String = "",
+    val didLaunchTermuxForBackground: Boolean = false,
     val lastUpdatedMillis: Long = 0L,
 ) {
     val isReady: Boolean
@@ -81,7 +83,7 @@ class RootSetupController(
         }
 
         val commandResult = runProcess(
-            command = listOf("su", "-c", buildTermuxRootSetupScript(context.packageName)),
+            command = listOf(suPath, "-c", buildTermuxRootSetupScript(context.packageName)),
             timeoutMillis = RootSetupTimeoutMillis,
         )
         if (commandResult.timedOut || commandResult.exitCode != 0) {
@@ -105,6 +107,8 @@ class RootSetupController(
             )
         }
 
+        val didLaunchTermuxForBackground =
+            commandResult.stdout.contains(TermuxLaunchForBackgroundMarker)
         val termuxSetup = bashTool.inspectSetup()
         if (termuxSetup.isReady) {
             RootSetupState(
@@ -112,6 +116,7 @@ class RootSetupController(
                 detail = "Root setup completed. Termux command access and Agent Mode Root authorization are ready.",
                 rootAvailable = true,
                 suPath = suPath,
+                didLaunchTermuxForBackground = didLaunchTermuxForBackground,
                 lastUpdatedMillis = System.currentTimeMillis(),
             )
         } else {
@@ -122,6 +127,7 @@ class RootSetupController(
                 },
                 rootAvailable = true,
                 suPath = suPath,
+                didLaunchTermuxForBackground = didLaunchTermuxForBackground,
                 lastUpdatedMillis = System.currentTimeMillis(),
             )
         }
@@ -296,6 +302,7 @@ class RootSetupController(
           did_launch_termux=true
         fi
         if [ "${'$'}did_launch_termux" = true ]; then
+          echo $TermuxLaunchForBackgroundMarker
           launch_app "${'$'}aether_pkg" || true
         fi
         echo AETHER_ROOT_SETUP_READY

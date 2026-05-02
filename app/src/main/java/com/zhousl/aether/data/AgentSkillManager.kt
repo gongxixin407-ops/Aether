@@ -2,8 +2,11 @@ package com.zhousl.aether.data
 
 import android.content.Context
 import android.net.Uri
+import android.util.Base64
 import java.io.File
 import java.io.FileOutputStream
+import java.io.FilterInputStream
+import java.io.InputStream
 import java.security.MessageDigest
 import java.util.Locale
 import java.util.UUID
@@ -24,6 +27,10 @@ import org.yaml.snakeyaml.constructor.SafeConstructor
 private const val SkillStorageDirectoryName = "agent-skills"
 private const val SkillTempDirectoryName = "agent-skills-tmp"
 private const val SkillFileName = "SKILL.md"
+private const val MaxSkillArchiveBytes = 32L * 1024L * 1024L
+private const val MaxSkillExtractedBytes = 128L * 1024L * 1024L
+private const val MaxSkillEntryBytes = 16L * 1024L * 1024L
+private const val MaxSkillZipEntries = 4096
 
 class AgentSkillManager(
     private val context: Context,
@@ -66,7 +73,7 @@ class AgentSkillManager(
             val workingDirectory = createTempDirectory()
             try {
                 context.contentResolver.openInputStream(zipUri)?.use { input ->
-                    unzipIntoDirectory(input.readBytes(), workingDirectory)
+                    unzipIntoDirectory(input, workingDirectory)
                 } ?: error("Couldn't open the selected zip file.")
                 val skillRoot = locateSkillRoot(root = workingDirectory)
                 installParsedSkill(
@@ -90,8 +97,7 @@ class AgentSkillManager(
             val plan = resolveRemoteDownloadPlan(rawUrl)
             val workingDirectory = createTempDirectory()
             try {
-                val zipBytes = downloadBytes(plan.downloadUrl)
-                unzipIntoDirectory(zipBytes, workingDirectory)
+                downloadZipIntoDirectory(plan.downloadUrl, workingDirectory)
                 val skillRoot = locateSkillRoot(
                     root = workingDirectory,
                     requestedSubpath = plan.subpath,
@@ -118,7 +124,7 @@ class AgentSkillManager(
                 .installedSkills
                 .firstOrNull { it.id == skillId }
                 ?: return@runCatching
-            File(skill.skillRootPath).deleteRecursively()
+            validatedInstalledSkillRoot(skill)?.deleteRecursively()
             extensionsRepository.removeInstalledSkill(skillId)
         }
     }
@@ -127,14 +133,18 @@ class AgentSkillManager(
         skill: InstalledSkill,
     ): Result<ActiveSkillContext> = withContext(Dispatchers.IO) {
         runCatching {
-            val parsed = parseSkillDocument(File(skill.skillMdPath))
+            val root = validatedInstalledSkillRoot(skill)
+                ?: error("Installed skill path is invalid.")
+            val skillFile = validatedSkillMarkdownFile(skill, root)
+                ?: error("Installed skill metadata does not point at its bundled SKILL.md.")
+            val parsed = parseSkillDocument(skillFile)
             ActiveSkillContext(
                 skillId = skill.id,
                 name = parsed.name,
                 description = parsed.description,
                 compatibility = parsed.compatibility,
                 allowedTools = parsed.allowedTools,
-                skillRootPath = skill.skillRootPath,
+                skillRootPath = root.absolutePath,
                 bodyMarkdown = parsed.bodyMarkdown,
                 resourceEntries = skill.resourceEntries,
             )
@@ -143,6 +153,24 @@ class AgentSkillManager(
 
     fun installedSkillsDirectory(): File = File(context.filesDir, SkillStorageDirectoryName).apply {
         mkdirs()
+    }
+
+    fun exportSkillBundles(skills: List<InstalledSkill>): JSONArray =
+        JSONArray().apply {
+            skills.sortedBy { it.name.lowercase(Locale.US) }
+                .mapNotNull { skill -> runCatching { exportSkillBundle(skill) }.getOrNull() }
+                .forEach(::put)
+        }
+
+    suspend fun importSkillBundles(bundles: JSONArray?): List<InstalledSkill> = withContext(Dispatchers.IO) {
+        if (bundles == null) return@withContext emptyList()
+        buildList {
+            for (index in 0 until bundles.length()) {
+                val bundle = bundles.optJSONObject(index) ?: continue
+                val installedSkill = runCatching { importSkillBundle(bundle) }.getOrNull() ?: continue
+                add(installedSkill)
+            }
+        }.sortedBy { it.name.lowercase(Locale.US) }
     }
 
     private suspend fun installParsedSkill(
@@ -368,14 +396,20 @@ class AgentSkillManager(
     }
 
     private fun unzipIntoDirectory(
-        zipBytes: ByteArray,
+        input: InputStream,
         destinationRoot: File,
     ) {
-        ZipInputStream(zipBytes.inputStream()).use { zipInput ->
+        val canonicalRoot = destinationRoot.canonicalPath + File.separator
+        var entryCount = 0
+        var totalExtractedBytes = 0L
+        ZipInputStream(LimitedInputStream(input, MaxSkillArchiveBytes)).use { zipInput ->
             while (true) {
                 val entry = zipInput.nextEntry ?: break
+                entryCount += 1
+                require(entryCount <= MaxSkillZipEntries) {
+                    "Skill archive contains too many files."
+                }
                 val output = destinationRoot.resolve(entry.name)
-                val canonicalRoot = destinationRoot.canonicalPath + File.separator
                 val canonicalOutput = output.canonicalPath
                 require(canonicalOutput.startsWith(canonicalRoot)) {
                     "Zip entry escaped the destination directory: ${entry.name}"
@@ -385,7 +419,12 @@ class AgentSkillManager(
                     output.mkdirs()
                 } else {
                     output.parentFile?.mkdirs()
-                    FileOutputStream(output).use { zipInput.copyTo(it) }
+                    totalExtractedBytes += copyZipEntryWithLimits(
+                        zipInput = zipInput,
+                        outputFile = output,
+                        entryName = entry.name,
+                        extractedBeforeEntry = totalExtractedBytes,
+                    )
                 }
                 zipInput.closeEntry()
             }
@@ -424,7 +463,10 @@ class AgentSkillManager(
         )
     }
 
-    private fun downloadBytes(url: String): ByteArray {
+    private fun downloadZipIntoDirectory(
+        url: String,
+        destinationRoot: File,
+    ) {
         val request = Request.Builder()
             .url(url)
             .addHeader("Accept", "application/zip, application/octet-stream")
@@ -434,7 +476,14 @@ class AgentSkillManager(
             if (!response.isSuccessful) {
                 error("Skill download failed with HTTP ${response.code}.")
             }
-            return response.body?.bytes() ?: error("Skill download returned an empty body.")
+            val body = response.body ?: error("Skill download returned an empty body.")
+            val contentLength = body.contentLength()
+            if (contentLength > MaxSkillArchiveBytes) {
+                error("Skill archive is too large.")
+            }
+            body.byteStream().use { input ->
+                unzipIntoDirectory(input, destinationRoot)
+            }
         }
     }
 
@@ -446,17 +495,211 @@ class AgentSkillManager(
 
     private fun sha256OfDirectory(directory: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
         directory.walkTopDown()
             .filter { it.isFile }
             .sortedBy { it.relativeTo(directory).invariantSeparatorsPath }
             .forEach { file ->
                 digest.update(file.relativeTo(directory).invariantSeparatorsPath.toByteArray())
-                digest.update(file.readBytes())
+                file.inputStream().use { input ->
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        digest.update(buffer, 0, read)
+                    }
+                }
             }
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
+    private fun exportSkillBundle(skill: InstalledSkill): JSONObject? {
+        val root = validatedInstalledSkillRoot(skill) ?: return null
+        validatedSkillMarkdownFile(skill, root) ?: return null
+        var entryCount = 0
+        var totalBytes = 0L
+        val files = JSONArray()
+        root.walkTopDown()
+            .filter { it.isFile }
+            .sortedBy { it.relativeTo(root).invariantSeparatorsPath }
+            .forEach { file ->
+                entryCount += 1
+                require(entryCount <= MaxSkillZipEntries) {
+                    "Skill contains too many bundled files."
+                }
+                val length = file.length()
+                require(length <= MaxSkillEntryBytes) {
+                    "Skill file is too large: ${file.name}"
+                }
+                totalBytes += length
+                require(totalBytes <= MaxSkillExtractedBytes) {
+                    "Skill bundle is too large."
+                }
+                val relativePath = file.relativeTo(root).invariantSeparatorsPath
+                files.put(
+                    JSONObject().apply {
+                        put("path", relativePath)
+                        put("dataBase64", Base64.encodeToString(file.readBytes(), Base64.NO_WRAP))
+                    }
+                )
+            }
+        return JSONObject().apply {
+            put("schemaVersion", 1)
+            put("id", skill.id)
+            put("name", skill.name)
+            put("actionLabel", skill.actionLabel)
+            put("isEnabled", skill.isEnabled)
+            put("installedAtMillis", skill.installedAtMillis)
+            put("source", skill.source.toJson())
+            put("files", files)
+        }
+    }
+
+    private suspend fun importSkillBundle(bundle: JSONObject): InstalledSkill {
+        val workingDirectory = createTempDirectory()
+        return try {
+            val sourceRoot = workingDirectory.resolve("skill").apply { mkdirs() }
+            val files = bundle.optJSONArray("files") ?: error("Skill bundle did not contain files.")
+            var totalBytes = 0L
+            for (index in 0 until files.length()) {
+                require(index < MaxSkillZipEntries) {
+                    "Skill bundle contains too many files."
+                }
+                val fileJson = files.optJSONObject(index) ?: continue
+                val relativePath = normalizeBundleRelativePath(fileJson.optString("path"))
+                val data = Base64.decode(fileJson.optString("dataBase64"), Base64.DEFAULT)
+                require(data.size.toLong() <= MaxSkillEntryBytes) {
+                    "Skill file is too large: $relativePath"
+                }
+                totalBytes += data.size.toLong()
+                require(totalBytes <= MaxSkillExtractedBytes) {
+                    "Skill bundle is too large."
+                }
+                val output = sourceRoot.resolve(relativePath)
+                val canonicalRoot = sourceRoot.canonicalPath + File.separator
+                val canonicalOutput = output.canonicalPath
+                require(canonicalOutput.startsWith(canonicalRoot)) {
+                    "Skill bundle entry escaped the destination directory: $relativePath"
+                }
+                output.parentFile?.mkdirs()
+                FileOutputStream(output).use { it.write(data) }
+            }
+            val installed = installParsedSkill(
+                sourceRoot = sourceRoot,
+                source = parseBundleSkillInstallSource(bundle.optJSONObject("source")),
+            )
+            val restored = installed.copy(
+                actionLabel = bundle.optString("actionLabel").ifBlank { installed.actionLabel },
+                isEnabled = bundle.optBoolean("isEnabled", installed.isEnabled),
+                installedAtMillis = bundle.optLong("installedAtMillis", installed.installedAtMillis),
+                updatedAtMillis = System.currentTimeMillis(),
+            )
+            extensionsRepository.upsertInstalledSkill(restored)
+            restored
+        } finally {
+            workingDirectory.deleteRecursively()
+        }
+    }
+
+    private fun validatedInstalledSkillRoot(skill: InstalledSkill): File? {
+        val storageRoot = installedSkillsDirectory().canonicalFile
+        val root = runCatching { File(skill.skillRootPath).canonicalFile }.getOrNull() ?: return null
+        val parent = runCatching { root.parentFile?.canonicalFile }.getOrNull() ?: return null
+        if (parent != storageRoot || !root.isDirectory) return null
+        return root
+    }
+
+    private fun validatedSkillMarkdownFile(
+        skill: InstalledSkill,
+        root: File,
+    ): File? {
+        val expected = File(root, SkillFileName).canonicalFile
+        val actual = runCatching { File(skill.skillMdPath).canonicalFile }.getOrNull() ?: return null
+        if (actual != expected || !actual.isFile) return null
+        return actual
+    }
+
+    private fun normalizeBundleRelativePath(rawPath: String): String {
+        val normalizedPath = rawPath.replace('\\', '/').trim('/')
+        require(
+            normalizedPath.isNotBlank() &&
+                !normalizedPath.startsWith("../") &&
+                !normalizedPath.contains("/../") &&
+                !File(normalizedPath).isAbsolute
+        ) {
+            "Skill bundle path must stay inside the skill directory."
+        }
+        return normalizedPath
+    }
+
+    private fun copyZipEntryWithLimits(
+        zipInput: ZipInputStream,
+        outputFile: File,
+        entryName: String,
+        extractedBeforeEntry: Long,
+    ): Long {
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var entryBytes = 0L
+        FileOutputStream(outputFile).use { output ->
+            while (true) {
+                val read = zipInput.read(buffer)
+                if (read < 0) break
+                entryBytes += read.toLong()
+                require(entryBytes <= MaxSkillEntryBytes) {
+                    "Skill archive entry is too large: $entryName"
+                }
+                require(extractedBeforeEntry + entryBytes <= MaxSkillExtractedBytes) {
+                    "Skill archive expands to too much data."
+                }
+                output.write(buffer, 0, read)
+            }
+        }
+        return entryBytes
+    }
+
+    private fun parseBundleSkillInstallSource(json: JSONObject?): SkillInstallSource =
+        SkillInstallSource(
+            kind = SkillInstallKind.fromStorage(json?.optString("kind")),
+            label = json?.optString("label").orEmpty(),
+            uri = json?.optString("uri").orEmpty(),
+            ref = json?.optString("ref").orEmpty(),
+            subpath = json?.optString("subpath").orEmpty(),
+        )
+
     private suspend fun <T> kotlinx.coroutines.flow.Flow<T>.firstValue(): T = first()
+}
+
+private class LimitedInputStream(
+    input: InputStream,
+    private val limitBytes: Long,
+) : FilterInputStream(input) {
+    private var bytesRead = 0L
+
+    override fun read(): Int {
+        val value = super.read()
+        if (value >= 0) {
+            countBytes(1)
+        }
+        return value
+    }
+
+    override fun read(
+        buffer: ByteArray,
+        offset: Int,
+        length: Int,
+    ): Int {
+        val read = super.read(buffer, offset, length)
+        if (read > 0) {
+            countBytes(read.toLong())
+        }
+        return read
+    }
+
+    private fun countBytes(count: Long) {
+        bytesRead += count
+        require(bytesRead <= limitBytes) {
+            "Skill archive is too large."
+        }
+    }
 }
 
 private data class ParsedSkillDocument(

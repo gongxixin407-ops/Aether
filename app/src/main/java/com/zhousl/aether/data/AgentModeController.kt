@@ -16,6 +16,7 @@ import com.zhousl.aether.agentmode.AetherAgentModeShizukuService
 import com.zhousl.aether.agentmode.IAetherAgentModeService
 import com.zhousl.aether.termux.TermuxBashTool
 import java.io.File
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -32,6 +33,7 @@ private const val FallbackAgentDisplayHeight = 1280
 private const val FallbackAgentDisplayDensityDpi = 320
 private const val AgentDisplayName = "aether-agent-mode"
 private const val ShizukuPermissionRequestCode = 4201
+private const val RootAuthorizationProbeTimeoutMillis = 2_000L
 
 private val ShizukuManagerPackages = listOf(
     "moe.shizuku.privileged.api",
@@ -65,6 +67,9 @@ enum class AgentModeAuthorizationIssue {
     ShizukuNotRunning,
     ShizukuPermissionMissing,
     ShizukuPermissionDenied,
+    RootUnavailable,
+    RootPermissionMissing,
+    RootPermissionDenied,
     Error,
 }
 
@@ -88,6 +93,15 @@ class AgentModeController(
     private val shizukuPermissionResultListener =
         Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
             if (requestCode == ShizukuPermissionRequestCode) {
+                AetherAnalytics.capture(
+                    event = "permission result",
+                    properties = mapOf(
+                        "permission" to "shizuku",
+                        "source" to "agent_mode_authorization",
+                        "granted" to (grantResult == PackageManager.PERMISSION_GRANTED),
+                        "result" to if (grantResult == PackageManager.PERMISSION_GRANTED) "granted" else "denied",
+                    ),
+                )
                 _authorizationState.value = if (grantResult == PackageManager.PERMISSION_GRANTED) {
                     AgentModeAuthorizationState(
                         issue = AgentModeAuthorizationIssue.Ready,
@@ -136,6 +150,12 @@ class AgentModeController(
         argumentsJson: String,
     ): String = withContext(Dispatchers.IO) {
         if (!settings.agentModeAuthorizationEnabled) {
+            captureAgentModeFailed(
+                settings = settings,
+                action = "unknown",
+                reason = "authorization_disabled",
+                message = "Agent Mode is not authorized.",
+            )
             return@withContext JSONObject().apply {
                 put("ok", false)
                 put("errmsg", "Agent Mode is not authorized. Enable it in Settings > Agent Mode first.")
@@ -143,7 +163,14 @@ class AgentModeController(
         }
 
         val arguments = runCatching { JSONObject(argumentsJson) }.getOrNull()
-            ?: return@withContext invalidArguments("Arguments were not valid JSON.")
+            ?: return@withContext invalidArguments("Arguments were not valid JSON.").also {
+                captureAgentModeFailed(
+                    settings = settings,
+                    action = "unknown",
+                    reason = "invalid_arguments",
+                    message = "Arguments were not valid JSON.",
+                )
+            }
         val action = arguments.optString("action").trim().lowercase()
 
         runCatching {
@@ -220,9 +247,22 @@ class AgentModeController(
                     put("stdout", "Agent Mode virtual display stopped.")
                 }.toString()
             }
-            else -> invalidArguments("Unsupported action '$action'.")
+            else -> invalidArguments("Unsupported action '$action'.").also {
+                captureAgentModeFailed(
+                    settings = settings,
+                    action = action.ifBlank { "unknown" },
+                    reason = "unsupported_action",
+                    message = "Unsupported action '$action'.",
+                )
+            }
             }
         }.getOrElse { throwable ->
+            captureAgentModeFailed(
+                settings = settings,
+                action = action.ifBlank { "unknown" },
+                reason = "exception",
+                message = throwable.message ?: throwable.javaClass.simpleName,
+            )
             toolError(
                 message = throwable.message ?: throwable.javaClass.simpleName,
                 action = action,
@@ -230,7 +270,7 @@ class AgentModeController(
         }
     }
 
-    fun refreshAuthorization(settings: AppSettings) {
+    suspend fun refreshAuthorization(settings: AppSettings) {
         _authorizationState.value = inspectAuthorization(settings)
     }
 
@@ -249,12 +289,30 @@ class AgentModeController(
         }
 
         return runCatching {
+            AetherAnalytics.capture(
+                event = "permission requested",
+                properties = mapOf(
+                    "permission" to "shizuku",
+                    "source" to "agent_mode_authorization",
+                    "current_issue" to current.issue.name.lowercase(),
+                ),
+            )
             Shizuku.requestPermission(ShizukuPermissionRequestCode)
             AgentModeAuthorizationState(
                 issue = AgentModeAuthorizationIssue.ShizukuPermissionMissing,
                 detail = "Confirm the Shizuku permission prompt, then refresh Agent Mode status.",
             )
         }.getOrElse { throwable ->
+            AetherAnalytics.capture(
+                event = "permission result",
+                properties = mapOf(
+                    "permission" to "shizuku",
+                    "source" to "agent_mode_authorization",
+                    "granted" to false,
+                    "result" to "request_failed",
+                    "error" to (throwable.message ?: throwable.javaClass.simpleName),
+                ),
+            )
             AgentModeAuthorizationState(
                 issue = AgentModeAuthorizationIssue.Error,
                 detail = throwable.message ?: "Failed to request Shizuku permission.",
@@ -430,6 +488,25 @@ class AgentModeController(
         )
     }
 
+    private fun captureAgentModeFailed(
+        settings: AppSettings,
+        action: String,
+        reason: String,
+        message: String,
+    ) {
+        AetherAnalytics.capture(
+            event = "agent mode failed",
+            properties = mapOf(
+                "action" to action,
+                "reason" to reason,
+                "message" to message.take(280),
+                "authorization_enabled" to settings.agentModeAuthorizationEnabled,
+                "authorization_method" to settings.agentModeAuthorizationMethod.storageValue,
+                "display_active" to _displayState.value.isActive,
+            ),
+        )
+    }
+
     private suspend fun currentDisplays(
         settings: AppSettings,
         aetherDisplayId: Int?,
@@ -490,10 +567,22 @@ class AgentModeController(
     private suspend fun requireRootService(): IAetherAgentModeService = withContext(Dispatchers.IO) {
         val existing = rootService
         if (existing != null) return@withContext existing
+        val suPath = findSuPath()
+        if (suPath.isBlank()) {
+            _authorizationState.value = AgentModeAuthorizationState(
+                issue = AgentModeAuthorizationIssue.RootUnavailable,
+                detail = "No su binary was detected on this device.",
+            )
+            error("No su binary was detected on this device.")
+        }
         val process = object : AppProcess.Terminal() {
-            override fun newTerminal(): List<String?> = listOf("su")
+            override fun newTerminal(): List<String?> = listOf(suPath)
         }
         if (!process.init(context)) {
+            _authorizationState.value = AgentModeAuthorizationState(
+                issue = AgentModeAuthorizationIssue.RootPermissionDenied,
+                detail = "Root Agent Mode service failed to start. Check that su can be granted to Aether.",
+            )
             error("Root Agent Mode service failed to start. Check that su can be granted to Aether.")
         }
         val binder = process.serviceBinder(
@@ -503,6 +592,10 @@ class AgentModeController(
             ?: error("Root Agent Mode service returned an invalid binder.")
         rootProcess = process
         rootService = service
+        _authorizationState.value = AgentModeAuthorizationState(
+            issue = AgentModeAuthorizationIssue.Ready,
+            detail = "Root Agent Mode service is connected.",
+        )
         service
     }
 
@@ -540,20 +633,59 @@ class AgentModeController(
         return withTimeout(8_000) { deferred.await() }
     }
 
-    private fun inspectAuthorization(settings: AppSettings): AgentModeAuthorizationState =
+    private suspend fun inspectAuthorization(settings: AppSettings): AgentModeAuthorizationState =
         when {
             !settings.agentModeAuthorizationEnabled -> AgentModeAuthorizationState(
                 issue = AgentModeAuthorizationIssue.Disabled,
                 detail = "Agent Mode authorization is disabled.",
             )
 
-            settings.agentModeAuthorizationMethod == AgentModeAuthorizationMethod.Root -> AgentModeAuthorizationState(
-                issue = AgentModeAuthorizationIssue.Ready,
-                detail = "Root mode is selected. Aether will request su when Agent Mode starts.",
-            )
+            settings.agentModeAuthorizationMethod == AgentModeAuthorizationMethod.Root -> inspectRootAuthorization()
 
             else -> inspectShizukuAuthorization()
         }
+
+    private suspend fun inspectRootAuthorization(): AgentModeAuthorizationState = withContext(Dispatchers.IO) {
+        if (rootService != null) {
+            return@withContext AgentModeAuthorizationState(
+                issue = AgentModeAuthorizationIssue.Ready,
+                detail = "Root Agent Mode service is already connected.",
+            )
+        }
+
+        val suPath = findSuPath()
+        if (suPath.isBlank()) {
+            return@withContext AgentModeAuthorizationState(
+                issue = AgentModeAuthorizationIssue.RootUnavailable,
+                detail = "No su binary was detected on this device.",
+            )
+        }
+
+        val probe = runRootAuthorizationProbe(suPath)
+        when {
+            probe.launchError.isNotBlank() -> AgentModeAuthorizationState(
+                issue = AgentModeAuthorizationIssue.Error,
+                detail = probe.launchError,
+            )
+
+            probe.exitCode == 0 -> AgentModeAuthorizationState(
+                issue = AgentModeAuthorizationIssue.Ready,
+                detail = "Root authorization is granted.",
+            )
+
+            probe.timedOut -> AgentModeAuthorizationState(
+                issue = AgentModeAuthorizationIssue.RootPermissionMissing,
+                detail = "Root authorization timed out. Grant su to Aether, then refresh Agent Mode status.",
+            )
+
+            else -> AgentModeAuthorizationState(
+                issue = AgentModeAuthorizationIssue.RootPermissionDenied,
+                detail = probe.combinedOutput().ifBlank {
+                    "Root authorization was not granted. Grant su to Aether, then refresh Agent Mode status."
+                }.take(280),
+            )
+        }
+    }
 
     private fun inspectShizukuAuthorization(): AgentModeAuthorizationState {
         if (!isAnyPackageInstalled(ShizukuManagerPackages)) {
@@ -597,6 +729,66 @@ class AgentModeController(
                 true
             }.getOrDefault(false)
         }
+
+    private fun findSuPath(): String {
+        val commonPaths = listOf(
+            "/system/bin/su",
+            "/system/xbin/su",
+            "/sbin/su",
+            "/su/bin/su",
+            "/debug_ramdisk/su",
+        )
+        commonPaths.firstOrNull { path ->
+            File(path).let { it.exists() && it.canExecute() }
+        }?.let { return it }
+
+        val result = runProcess(
+            command = listOf("sh", "-c", "command -v su 2>/dev/null || true"),
+            timeoutMillis = RootAuthorizationProbeTimeoutMillis,
+        )
+        return result.stdout.lineSequence().firstOrNull()?.trim().orEmpty()
+    }
+
+    private fun runRootAuthorizationProbe(suPath: String): RootCommandResult =
+        runProcess(
+            command = listOf(suPath, "-c", "true"),
+            timeoutMillis = RootAuthorizationProbeTimeoutMillis,
+        )
+
+    private fun runProcess(
+        command: List<String>,
+        timeoutMillis: Long,
+    ): RootCommandResult {
+        val process = runCatching {
+            ProcessBuilder(command).start()
+        }.getOrElse { throwable ->
+            return RootCommandResult(
+                exitCode = -1,
+                launchError = throwable.message.orEmpty(),
+            )
+        }
+
+        val finished = process.waitFor(timeoutMillis, TimeUnit.MILLISECONDS)
+        if (!finished) {
+            runCatching { process.destroy() }
+            if (!process.waitFor(400, TimeUnit.MILLISECONDS)) {
+                runCatching { process.destroyForcibly() }
+            }
+        }
+
+        val stdout = runCatching {
+            process.inputStream.bufferedReader().readText()
+        }.getOrDefault("")
+        val stderr = runCatching {
+            process.errorStream.bufferedReader().readText()
+        }.getOrDefault("")
+        return RootCommandResult(
+            exitCode = if (finished) process.exitValue() else -1,
+            stdout = stdout,
+            stderr = stderr,
+            timedOut = !finished,
+        )
+    }
 
 
     private fun normalizedX(value: Double): Int? =
@@ -643,4 +835,17 @@ class AgentModeController(
         val height: Int,
         val densityDpi: Int,
     )
+
+    private data class RootCommandResult(
+        val exitCode: Int,
+        val stdout: String = "",
+        val stderr: String = "",
+        val timedOut: Boolean = false,
+        val launchError: String = "",
+    ) {
+        fun combinedOutput(): String = listOf(stdout, stderr, launchError)
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .joinToString("\n")
+    }
 }

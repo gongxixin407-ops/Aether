@@ -287,7 +287,12 @@ internal fun parseProviderConfigs(rawValue: String): List<LlmProviderConfig> {
             for (index in 0 until array.length()) {
                 val json = array.optJSONObject(index) ?: continue
                 val providerType = LlmProvider.fromStorage(json.optString("providerType"))
-                val modelId = json.optString("modelId").ifBlank { providerType.defaultModelId }
+                val providerName = json.optString("name").trim()
+                    .ifBlank { providerType.displayName }
+                val baseUrl = json.optString("baseUrl").trim()
+                    .ifBlank { providerType.defaultBaseUrl }
+                val modelId = json.optString("modelId").trim()
+                    .ifBlank { providerType.defaultModelId }
                 val enabledModelIds = json.optJSONArray("enabledModelIds").toStringListSafe()
                 val cachedModels = normalizeStringList(
                     buildList {
@@ -296,17 +301,17 @@ internal fun parseProviderConfigs(rawValue: String): List<LlmProviderConfig> {
                         addAll(enabledModelIds)
                     }
                 )
-                val inferredProviderId = json.optString("name")
+                val inferredProviderId = providerName
                     .sanitizeProviderId()
                     .ifBlank { "${providerType.storageValue}_${index + 1}" }
                 add(
                     LlmProviderConfig(
-                        id = json.optString("id").ifBlank { UUID.randomUUID().toString() },
-                        providerId = json.optString("providerId").ifBlank { inferredProviderId },
-                        name = json.optString("name"),
+                        id = json.optString("id").trim().ifBlank { UUID.randomUUID().toString() },
+                        providerId = json.optString("providerId").trim().ifBlank { inferredProviderId },
+                        name = providerName,
                         providerType = providerType,
                         apiKey = json.optString("apiKey"),
-                        baseUrl = json.optString("baseUrl"),
+                        baseUrl = baseUrl,
                         modelId = modelId,
                         cachedModels = cachedModels,
                         enabledModelIds = if (json.has("enabledModelIds")) {
@@ -399,7 +404,8 @@ fun List<LlmProviderConfig>.availableModelOptions(
     includeDisabledProviders: Boolean = false,
     includeDisabledModels: Boolean = false,
 ): List<ProviderModelOption> {
-    val scopedConfigs = if (includeDisabledProviders) this else filter { it.isEnabled }
+    val scopedConfigs = (if (includeDisabledProviders) this else filter { it.isEnabled })
+        .filter { it.baseUrl.trim().isNotEmpty() && it.providerId.trim().isNotEmpty() }
     val modelCounts = scopedConfigs
         .flatMap { config ->
             val models = if (includeDisabledModels) config.availableModels() else config.enabledModels()
@@ -411,19 +417,22 @@ fun List<LlmProviderConfig>.availableModelOptions(
     return scopedConfigs.flatMap { config ->
         val models = if (includeDisabledModels) config.availableModels() else config.enabledModels()
         models.map { modelId ->
-            val fullLabel = "${config.providerId}/$modelId"
+            val providerId = config.providerId.trim()
+            val providerName = config.name.trim().ifBlank { providerId }
+            val normalizedModelId = modelId.trim()
+            val fullLabel = "$providerId/$normalizedModelId"
             ProviderModelOption(
-                key = buildModelOptionKey(config.id, modelId),
+                key = buildModelOptionKey(config.id, normalizedModelId),
                 providerConfigId = config.id,
-                providerId = config.providerId,
-                providerName = config.name,
+                providerId = providerId,
+                providerName = providerName,
                 providerType = config.providerType,
                 apiKey = config.apiKey,
-                baseUrl = config.baseUrl,
-                modelId = modelId,
+                baseUrl = config.baseUrl.trim(),
+                modelId = normalizedModelId,
                 basicFunctionCallingCompatibilityMode = config.basicFunctionCallingCompatibilityMode,
                 fullLabel = fullLabel,
-                chatLabel = if ((modelCounts[modelId] ?: 0) > 1) fullLabel else modelId,
+                chatLabel = if ((modelCounts[normalizedModelId] ?: 0) > 1) fullLabel else normalizedModelId,
             )
         }
     }.sortedWith(compareBy(ProviderModelOption::providerId, ProviderModelOption::modelId))

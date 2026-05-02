@@ -30,6 +30,11 @@ enum class OnboardingStep {
     McpOverview,
 }
 
+enum class RootSetupProgressReturnPage {
+    Termux,
+    AgentMode,
+}
+
 enum class MessageAuthor {
     User,
     Agent,
@@ -78,16 +83,11 @@ data class ChatToolInvocation(
     val isRunning: Boolean = false,
     val startedAtUptimeMillis: Long = 0L,
     val completedAtUptimeMillis: Long? = null,
-)
-
-sealed interface AssistantResponseBlock {
-    val id: String
-
     val startedAtMillis: Long = 0L,
     val completedAtMillis: Long? = null,
     val timelineOrder: Long = 0L,
-    data class Text(
-        override val id: String,
+)
+
 data class ReasoningSummaryChunk(
     val id: String,
     val title: String = "",
@@ -114,6 +114,11 @@ data class ReasoningTrace(
         get() = chunks.isNotEmpty() || toolInvocations.isNotEmpty()
 }
 
+sealed interface AssistantResponseBlock {
+    val id: String
+
+    data class Text(
+        override val id: String,
         val text: String,
     ) : AssistantResponseBlock
 
@@ -121,27 +126,27 @@ data class ReasoningTrace(
         override val id: String,
         val toolInvocations: List<ChatToolInvocation>,
     ) : AssistantResponseBlock
-}
-
-data class ChatMessage(
-    val id: String,
-    val author: MessageAuthor,
 
     data class Reasoning(
         override val id: String,
         val trace: ReasoningTrace,
     ) : AssistantResponseBlock
+}
+
+data class ChatMessage(
+    val id: String,
+    val author: MessageAuthor,
     val text: String,
     val createdAtMillis: Long = 0L,
     val attachments: List<ChatAttachment> = emptyList(),
     val toolInvocations: List<ChatToolInvocation> = emptyList(),
     val thoughtDurationMillis: Long? = null,
+    val reasoningTrace: ReasoningTrace? = null,
     val branchGroup: ChatBranchGroup? = null,
     val responseGroupId: String? = null,
     val assistantActionsHidden: Boolean = false,
 )
 
-    val reasoningTrace: ReasoningTrace? = null,
 data class ChatSession(
     val id: String,
     val title: String,
@@ -188,12 +193,13 @@ data class AetherUiState(
     val pendingResponseBlocks: List<AssistantResponseBlock> = emptyList(),
     val pendingAssistantText: String = "",
     val pendingStatusText: String = "",
+    val pendingStatusDetail: String = "",
     val sessionExecutionStates: Map<String, SessionExecutionState> = emptyMap(),
     val unviewedCompletedSessionIds: Set<String> = emptySet(),
     val termuxSetupState: TermuxSetupState = TermuxSetupState(),
     val rootSetupState: RootSetupState = RootSetupState(),
+    val rootSetupProgressReturnPage: RootSetupProgressReturnPage? = null,
     val installedSkills: List<InstalledSkill> = emptyList(),
-    val pendingStatusDetail: String = "",
     val mcpServers: List<McpServerConfig> = emptyList(),
     val providerConfigs: List<LlmProviderConfig> = emptyList(),
     val isFetchingModels: Boolean = false,

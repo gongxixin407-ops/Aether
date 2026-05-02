@@ -253,6 +253,7 @@ private fun AetherAppContent(
     var pendingSaveTarget by remember { mutableStateOf<PendingSaveTarget?>(null) }
     var pendingSessionExportId by remember { mutableStateOf<String?>(null) }
     var pendingSkillZipCompletion by remember { mutableStateOf<((Boolean) -> Unit)?>(null) }
+    var pendingTermuxPermissionSource by remember { mutableStateOf("unknown") }
     val onPickedDocuments: (List<Uri>) -> Unit = { uris ->
         uris.forEach { uri ->
             runCatching {
@@ -357,6 +358,14 @@ private fun AetherAppContent(
             }
         },
     )
+    val logExportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/plain"),
+        onResult = { destinationUri ->
+            if (destinationUri != null) {
+                viewModel.exportLogsToUri(destinationUri)
+            }
+        },
+    )
     val appDataImportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
         onResult = { sourceUri ->
@@ -374,6 +383,13 @@ private fun AetherAppContent(
     val termuxPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
         onResult = { granted ->
+            val source = pendingTermuxPermissionSource
+            pendingTermuxPermissionSource = "unknown"
+            viewModel.trackPermissionResult(
+                permission = "termux_run_command",
+                granted = granted,
+                source = source,
+            )
             viewModel.refreshTermuxSetup()
             Toast.makeText(
                 context,
@@ -382,6 +398,23 @@ private fun AetherAppContent(
             ).show()
         },
     )
+    fun requestTermuxPermission(source: String) {
+        viewModel.trackTermuxSetupStarted(source)
+        viewModel.trackPermissionRequested(
+            permission = "termux_run_command",
+            source = source,
+        )
+        pendingTermuxPermissionSource = source
+        termuxPermissionLauncher.launch(TermuxContract.RunCommandPermission)
+    }
+
+    fun startTermuxSetupAction(
+        source: String,
+        action: () -> Unit,
+    ) {
+        viewModel.trackTermuxSetupStarted(source)
+        action()
+    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -473,13 +506,19 @@ private fun AetherAppContent(
                         onClose = viewModel::closeOnboarding,
                         onCompleteProviderSetup = viewModel::completeOnboardingProviderSetup,
                         onSaveTavilyApiKey = viewModel::saveOnboardingTavilyApiKey,
-                        onRequestTermuxPermission = {
-                            termuxPermissionLauncher.launch(TermuxContract.RunCommandPermission)
+                        onRequestTermuxPermission = { requestTermuxPermission("onboarding_termux_permission") },
+                        onOpenAppPermissions = {
+                            startTermuxSetupAction("onboarding_app_permissions") { openAppPermissionSettings(context) }
                         },
-                        onOpenAppPermissions = { openAppPermissionSettings(context) },
-                        onOpenTermuxSettings = { openTermuxSettings(context) },
-                        onOpenTermux = { openTermux(context) },
-                        onInstallTermux = { openTermuxInstallPage(context) },
+                        onOpenTermuxSettings = {
+                            startTermuxSetupAction("onboarding_termux_settings") { openTermuxSettings(context) }
+                        },
+                        onOpenTermux = {
+                            startTermuxSetupAction("onboarding_open_termux") { openTermux(context) }
+                        },
+                        onInstallTermux = {
+                            startTermuxSetupAction("onboarding_install_termux") { openTermuxInstallPage(context) }
+                        },
                         onRefreshTermuxSetup = viewModel::refreshTermuxSetup,
                         onRefreshRootSetup = viewModel::refreshRootSetup,
                         onConfigureWithRoot = viewModel::configureLocalAccessWithRoot,
@@ -489,10 +528,12 @@ private fun AetherAppContent(
                                 viewModel.requestShizukuPermission()
                             }
                         },
+                        onCompleteFollowUp = viewModel::completeFollowUpOnboarding,
                         onExploreSettings = viewModel::exploreSettingsFromOnboardingTour,
                     )
 
                     AppScreen.Chat -> ConversationScreen(
+                    conversationStateKey = uiState.currentSessionId,
                     messages = currentMessages,
                     workspaceDirectory = currentWorkspaceDirectory,
                     pendingToolInvocations = pendingToolInvocations,
@@ -500,6 +541,7 @@ private fun AetherAppContent(
                     pendingResponseBlocks = pendingResponseBlocks,
                     pendingAssistantText = pendingAssistantText,
                     pendingStatusText = currentSessionExecution?.pendingStatusText.orEmpty(),
+                    pendingStatusDetail = currentSessionExecution?.pendingStatusDetail.orEmpty(),
                     pendingInputs = pendingInputs,
                     inputValue = uiState.draftInput,
                     draftAttachments = uiState.draftAttachments,
@@ -533,7 +575,6 @@ private fun AetherAppContent(
                     onRemoveDraftAttachment = viewModel::removeDraftAttachment,
                     onSetSkillSelected = viewModel::setComposerSkillSelected,
                     onSetMcpServerSelected = viewModel::setComposerMcpServerSelected,
-                    conversationStateKey = uiState.currentSessionId,
                     onSetAgentModeSelected = viewModel::setComposerAgentModeSelected,
                     onCancelEdit = viewModel::cancelMessageEdit,
                     onSend = viewModel::sendCurrentMessage,
@@ -541,7 +582,6 @@ private fun AetherAppContent(
                     onSteerFollowUp = viewModel::steerCurrentMessage,
                     onMenu = { scope.launch { drawerState.open() } },
                     onNewChat = viewModel::startNewChat,
-                    pendingStatusDetail = currentSessionExecution?.pendingStatusDetail.orEmpty(),
                     onPickImages = {
                         imagePicker.launch(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
@@ -586,13 +626,19 @@ private fun AetherAppContent(
                         clipboardManager.setText(AnnotatedString(message.text))
                         Toast.makeText(context, strings.replyCopied, Toast.LENGTH_SHORT).show()
                     },
-                    onRequestTermuxPermission = {
-                        termuxPermissionLauncher.launch(TermuxContract.RunCommandPermission)
+                    onRequestTermuxPermission = { requestTermuxPermission("chat_termux_permission") },
+                    onOpenAppPermissions = {
+                        startTermuxSetupAction("chat_app_permissions") { openAppPermissionSettings(context) }
                     },
-                    onOpenAppPermissions = { openAppPermissionSettings(context) },
-                    onOpenTermuxSettings = { openTermuxSettings(context) },
-                    onOpenTermux = { openTermux(context) },
-                    onInstallTermux = { openTermuxInstallPage(context) },
+                    onOpenTermuxSettings = {
+                        startTermuxSetupAction("chat_termux_settings") { openTermuxSettings(context) }
+                    },
+                    onOpenTermux = {
+                        startTermuxSetupAction("chat_open_termux") { openTermux(context) }
+                    },
+                    onInstallTermux = {
+                        startTermuxSetupAction("chat_install_termux") { openTermuxInstallPage(context) }
+                    },
                     onRefreshTermuxSetup = viewModel::refreshTermuxSetup,
                     onPauseGeneration = viewModel::pauseGeneration,
                     onResumeOnboarding = viewModel::resumeOnboarding,
@@ -614,6 +660,7 @@ private fun AetherAppContent(
                     agentModeAuthorizationMethod = uiState.settings.agentModeAuthorizationMethod,
                     agentModeAuthorizationState = uiState.agentModeAuthorizationState,
                     rootSetupState = uiState.rootSetupState,
+                    rootSetupProgressReturnPage = uiState.rootSetupProgressReturnPage,
                     language = uiState.settings.language,
                     themeMode = uiState.settings.themeMode,
                     defaultChatModelKey = uiState.settings.defaultChatModelKey,
@@ -647,22 +694,32 @@ private fun AetherAppContent(
                     onSaveStdIoMcpServer = viewModel::saveStdIoMcpServer,
                     onToggleMcpServerEnabled = viewModel::setMcpServerEnabled,
                     onRemoveMcpServer = viewModel::removeMcpServer,
-                    onRequestTermuxPermission = {
-                        termuxPermissionLauncher.launch(TermuxContract.RunCommandPermission)
-                    },
+                    onRequestTermuxPermission = { requestTermuxPermission("settings_termux_permission") },
                     onImportAppData = {
                         appDataImportLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
                     },
                     onExportAppData = {
                         appDataExportLauncher.launch("aether-data.json")
                     },
-                    onOpenAppPermissions = { openAppPermissionSettings(context) },
-                    onOpenTermuxSettings = { openTermuxSettings(context) },
-                    onOpenTermux = { openTermux(context) },
-                    onInstallTermux = { openTermuxInstallPage(context) },
+                    onExportLogs = {
+                        logExportLauncher.launch("aether-logs.txt")
+                    },
+                    onOpenAppPermissions = {
+                        startTermuxSetupAction("settings_app_permissions") { openAppPermissionSettings(context) }
+                    },
+                    onOpenTermuxSettings = {
+                        startTermuxSetupAction("settings_termux_settings") { openTermuxSettings(context) }
+                    },
+                    onOpenTermux = {
+                        startTermuxSetupAction("settings_open_termux") { openTermux(context) }
+                    },
+                    onInstallTermux = {
+                        startTermuxSetupAction("settings_install_termux") { openTermuxInstallPage(context) }
+                    },
                     onRefreshTermuxSetup = viewModel::refreshTermuxSetup,
                     onRefreshRootSetup = viewModel::refreshRootSetup,
-                    onConfigureWithRoot = viewModel::configureLocalAccessWithRoot,
+                    onStartRootSetupFromSettings = viewModel::startRootSetupFromSettings,
+                    onDismissRootSetupProgress = viewModel::dismissRootSetupProgress,
                     onRequestShizukuPermission = viewModel::requestShizukuPermission,
                     onRefreshAgentModeAuthorization = viewModel::refreshAgentModeAuthorization,
                     onOpenShizuku = { openShizuku(context) },

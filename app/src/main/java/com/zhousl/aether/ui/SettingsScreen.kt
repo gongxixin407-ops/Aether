@@ -101,6 +101,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import com.zhousl.aether.BuildConfig
 import com.zhousl.aether.R
 import com.zhousl.aether.data.AetherPrivacyPolicyUrl
@@ -160,6 +161,7 @@ private enum class SettingsPage {
     EditMcpServer,
     Termux,
     AgentMode,
+    RootSetupProgress,
     Developer,
     About,
 }
@@ -184,11 +186,24 @@ private fun SettingsPage.depth(): Int = when (this) {
     SettingsPage.EditProvider,
     SettingsPage.AddSkill,
     SettingsPage.AddMcpServer,
-    SettingsPage.EditMcpServer -> 2
+    SettingsPage.EditMcpServer,
+    SettingsPage.RootSetupProgress -> 2
     SettingsPage.DefaultChatModel,
     SettingsPage.DefaultTitleModel,
     SettingsPage.DefaultNamingModel -> 3
 }
+
+private fun SettingsPage.toRootSetupProgressReturnPage(): RootSetupProgressReturnPage =
+    when (this) {
+        SettingsPage.AgentMode -> RootSetupProgressReturnPage.AgentMode
+        else -> RootSetupProgressReturnPage.Termux
+    }
+
+private fun RootSetupProgressReturnPage.toSettingsPage(): SettingsPage =
+    when (this) {
+        RootSetupProgressReturnPage.Termux -> SettingsPage.Termux
+        RootSetupProgressReturnPage.AgentMode -> SettingsPage.AgentMode
+    }
 
 // -----------------------------------------------------------------------------
 // Animation constants
@@ -238,6 +253,7 @@ fun SettingsScreen(
     agentModeAuthorizationMethod: AgentModeAuthorizationMethod,
     agentModeAuthorizationState: AgentModeAuthorizationState,
     rootSetupState: RootSetupState,
+    rootSetupProgressReturnPage: RootSetupProgressReturnPage?,
     language: AppLanguage,
     themeMode: AppThemeMode,
     defaultChatModelKey: String,
@@ -286,13 +302,15 @@ fun SettingsScreen(
     onRequestTermuxPermission: () -> Unit,
     onImportAppData: () -> Unit,
     onExportAppData: () -> Unit,
+    onExportLogs: () -> Unit,
     onOpenAppPermissions: () -> Unit,
     onOpenTermuxSettings: () -> Unit,
     onOpenTermux: () -> Unit,
     onInstallTermux: () -> Unit,
     onRefreshTermuxSetup: () -> Unit,
     onRefreshRootSetup: () -> Unit,
-    onConfigureWithRoot: () -> Unit,
+    onStartRootSetupFromSettings: (RootSetupProgressReturnPage) -> Unit,
+    onDismissRootSetupProgress: () -> Unit,
     onRequestShizukuPermission: () -> Unit,
     onRefreshAgentModeAuthorization: () -> Unit,
     onOpenShizuku: () -> Unit,
@@ -346,10 +364,6 @@ fun SettingsScreen(
     var editingProviderId by rememberSaveable { mutableStateOf<String?>(null) }
     var editingMcpServerId by rememberSaveable { mutableStateOf<String?>(null) }
     var lastObservedRootSetupIssue by rememberSaveable { mutableStateOf(rootSetupState.issue) }
-
-    fun configureWithRootFromSettings() {
-        onConfigureWithRoot()
-    }
 
     LaunchedEffect(rootSetupState.issue) {
         if (
@@ -440,6 +454,32 @@ fun SettingsScreen(
     // Local page navigation
     var currentPage by rememberSaveable { mutableStateOf(SettingsPage.Hub.name) }
     val page = SettingsPage.valueOf(currentPage)
+    var rootSetupReturnPage by rememberSaveable { mutableStateOf(SettingsPage.Termux.name) }
+
+    fun rootSetupReturnPageValue(): SettingsPage =
+        runCatching { SettingsPage.valueOf(rootSetupReturnPage) }
+            .getOrDefault(SettingsPage.Termux)
+
+    fun openRootSetupProgress(returnPage: SettingsPage) {
+        rootSetupReturnPage = returnPage.name
+        currentPage = SettingsPage.RootSetupProgress.name
+        onStartRootSetupFromSettings(returnPage.toRootSetupProgressReturnPage())
+    }
+
+    fun closeRootSetupProgress() {
+        onDismissRootSetupProgress()
+        currentPage = rootSetupReturnPageValue().name
+    }
+
+    fun runRootSetupAgain() {
+        onStartRootSetupFromSettings(rootSetupReturnPageValue().toRootSetupProgressReturnPage())
+    }
+
+    LaunchedEffect(rootSetupProgressReturnPage) {
+        val returnPage = rootSetupProgressReturnPage ?: return@LaunchedEffect
+        rootSetupReturnPage = returnPage.toSettingsPage().name
+        currentPage = SettingsPage.RootSetupProgress.name
+    }
 
     // Determine parent page for back navigation
     fun parentPage(): SettingsPage = when (page) {
@@ -448,12 +488,14 @@ fun SettingsScreen(
         SettingsPage.AddProvider, SettingsPage.EditProvider -> SettingsPage.Providers
         SettingsPage.AddSkill -> SettingsPage.Skills
         SettingsPage.AddMcpServer, SettingsPage.EditMcpServer -> SettingsPage.McpServers
+        SettingsPage.RootSetupProgress -> rootSetupReturnPageValue()
         else -> SettingsPage.Hub
     }
 
     BackHandler {
         when (page) {
             SettingsPage.Hub -> persistAndExit()
+            SettingsPage.RootSetupProgress -> closeRootSetupProgress()
             else -> currentPage = parentPage().name
         }
     }
@@ -730,7 +772,7 @@ fun SettingsScreen(
                 onInstallTermux = onInstallTermux,
                 onRefreshTermuxSetup = onRefreshTermuxSetup,
                 onRefreshRootSetup = onRefreshRootSetup,
-                onConfigureWithRoot = ::configureWithRootFromSettings,
+                onConfigureWithRoot = { openRootSetupProgress(SettingsPage.Termux) },
                 onBack = { currentPage = SettingsPage.Hub.name },
             )
 
@@ -748,10 +790,20 @@ fun SettingsScreen(
                 onOpenShizuku = onOpenShizuku,
                 onInstallShizuku = onInstallShizuku,
                 onRefreshRootSetup = onRefreshRootSetup,
-                onConfigureWithRoot = ::configureWithRootFromSettings,
+                onConfigureWithRoot = { openRootSetupProgress(SettingsPage.AgentMode) },
                 onStopAgentModeDisplay = onStopAgentModeDisplay,
                 onRefreshAgentModeDisplays = onRefreshAgentModeDisplays,
                 onBack = { currentPage = SettingsPage.Hub.name },
+            )
+
+            SettingsPage.RootSetupProgress -> RootSetupProgressPage(
+                rootSetupState = rootSetupState,
+                termuxSetupState = termuxSetupState,
+                agentModeAuthorizationEnabled = agentModeAuthorizationEnabledValue,
+                agentModeAuthorizationMethod = agentModeAuthorizationMethodValue,
+                agentModeAuthorizationState = agentModeAuthorizationState,
+                onRunRootSetup = ::runRootSetupAgain,
+                onBack = ::closeRootSetupProgress,
             )
 
             SettingsPage.Developer -> DeveloperSettingsPage(
@@ -759,6 +811,7 @@ fun SettingsScreen(
                 onReplayFollowUpOnboarding = ::persistAndReplayFollowUpOnboarding,
                 onImportAppData = onImportAppData,
                 onExportAppData = onExportAppData,
+                onExportLogs = onExportLogs,
                 onForceUpdateCheckForTesting = onForceUpdateCheckForTesting,
                 onBack = { currentPage = SettingsPage.Hub.name },
             )
@@ -2274,6 +2327,32 @@ private fun TermuxSettingsPage(
     onBack: () -> Unit,
 ) {
     val strings = rememberAetherStrings()
+    var showAlreadyConfiguredDialog by rememberSaveable { mutableStateOf(false) }
+
+    fun requestRootSetup() {
+        if (termuxSetupState.isReady && !rootSetupState.isRunning) {
+            showAlreadyConfiguredDialog = true
+        } else {
+            onConfigureWithRoot()
+        }
+    }
+
+    if (showAlreadyConfiguredDialog) {
+        RootSetupAlreadyConfiguredDialog(
+            title = tr(strings, "Termux is already configured", "Termux 已配置完成"),
+            body = tr(
+                strings,
+                "Termux command access is already working. You do not need to run Root automatic setup again.",
+                "Termux 命令访问已经正常，不需要再次执行 Root 自动配置。",
+            ),
+            onDismiss = { showAlreadyConfiguredDialog = false },
+            onContinue = {
+                showAlreadyConfiguredDialog = false
+                onConfigureWithRoot()
+            },
+        )
+    }
+
     LaunchedEffect(Unit) {
         onRefreshRootSetup()
         onRefreshTermuxSetup()
@@ -2302,7 +2381,7 @@ private fun TermuxSettingsPage(
                 title = tr(strings, "Root automatic setup", "Root 自动配置"),
                 rootSetupState = rootSetupState,
                 body = rootSetupSettingsBody(rootSetupState, strings),
-                onConfigureWithRoot = onConfigureWithRoot,
+                onConfigureWithRoot = ::requestRootSetup,
             )
         }
 
@@ -2356,10 +2435,45 @@ private fun AgentModeSettingsPage(
     onBack: () -> Unit,
 ) {
     val strings = rememberAetherStrings()
+    var showAlreadyConfiguredDialog by rememberSaveable { mutableStateOf(false) }
+    val agentModeConfigured = agentModeAuthorizationEnabled && agentModeAuthorizationState.isReady
+
+    fun requestRootSetup() {
+        if (agentModeConfigured && !rootSetupState.isRunning) {
+            showAlreadyConfiguredDialog = true
+        } else {
+            onConfigureWithRoot()
+        }
+    }
+
     fun refreshAgentModeStatus() {
         onRefreshAgentModeAuthorization()
         onRefreshAgentModeDisplays()
     }
+    if (showAlreadyConfiguredDialog) {
+        RootSetupAlreadyConfiguredDialog(
+            title = tr(strings, "Agent Mode is already configured", "Agent Mode 已配置完成"),
+            body = if (agentModeAuthorizationMethod == AgentModeAuthorizationMethod.Root) {
+                tr(
+                    strings,
+                    "Root Agent Mode authorization is already ready. You do not need to run Root automatic setup again.",
+                    "Root Agent Mode 授权已经正常，不需要再次执行 Root 自动配置。",
+                )
+            } else {
+                tr(
+                    strings,
+                    "Agent Mode authorization is already ready. Root automatic setup is not required; continuing will reconfigure Agent Mode to Root.",
+                    "Agent Mode 授权已经正常，不需要执行 Root 自动配置；继续后会将 Agent Mode 重新配置为 Root。",
+                )
+            },
+            onDismiss = { showAlreadyConfiguredDialog = false },
+            onContinue = {
+                showAlreadyConfiguredDialog = false
+                onConfigureWithRoot()
+            },
+        )
+    }
+
     LaunchedEffect(Unit) {
         onRefreshRootSetup()
         refreshAgentModeStatus()
@@ -2435,7 +2549,7 @@ private fun AgentModeSettingsPage(
                         "Use su to select Root mode and prepare local device control automatically.",
                         "使用 su 自动选择 Root 模式，并准备本地设备控制。",
                     ),
-                    onConfigureWithRoot = onConfigureWithRoot,
+                    onConfigureWithRoot = ::requestRootSetup,
                 )
             }
         }
@@ -2531,6 +2645,362 @@ private fun AgentModeSettingsPage(
             }
         }
     }
+}
+
+@Composable
+private fun RootSetupAlreadyConfiguredDialog(
+    title: String,
+    body: String,
+    onDismiss: () -> Unit,
+    onContinue: () -> Unit,
+) {
+    val strings = rememberAetherStrings()
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp)
+                .shadow(22.dp, RoundedCornerShape(28.dp), ambientColor = AetherScrim, spotColor = AetherScrim)
+                .clip(RoundedCornerShape(28.dp))
+                .background(AetherSurfaceHigh)
+                .padding(20.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                color = AetherOnSurface,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = body,
+                style = MaterialTheme.typography.bodyMedium,
+                color = AetherOnSurfaceVariant,
+            )
+            Spacer(Modifier.height(18.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                SettingsSubtleActionButton(
+                    label = tr(strings, "Cancel", "取消"),
+                    onClick = onDismiss,
+                    modifier = Modifier.weight(1f),
+                )
+                SettingsActionButton(
+                    label = tr(strings, "Continue", "继续"),
+                    onClick = onContinue,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+private enum class RootSetupProgressStepStatus {
+    Pending,
+    Active,
+    Complete,
+    Attention,
+}
+
+@Composable
+private fun RootSetupProgressPage(
+    rootSetupState: RootSetupState,
+    termuxSetupState: TermuxSetupState,
+    agentModeAuthorizationEnabled: Boolean,
+    agentModeAuthorizationMethod: AgentModeAuthorizationMethod,
+    agentModeAuthorizationState: AgentModeAuthorizationState,
+    onRunRootSetup: () -> Unit,
+    onBack: () -> Unit,
+) {
+    val strings = rememberAetherStrings()
+    val rootAgentModeReady = agentModeAuthorizationEnabled &&
+        agentModeAuthorizationMethod == AgentModeAuthorizationMethod.Root &&
+        agentModeAuthorizationState.isReady
+    val rootStepStatus = when {
+        rootSetupState.isRunning -> RootSetupProgressStepStatus.Active
+        rootSetupState.isReady || rootSetupState.rootAvailable -> RootSetupProgressStepStatus.Complete
+        rootSetupState.issue == RootSetupIssue.Unavailable -> RootSetupProgressStepStatus.Attention
+        else -> RootSetupProgressStepStatus.Pending
+    }
+    val termuxStepStatus = when {
+        rootSetupState.isReady || termuxSetupState.isReady -> RootSetupProgressStepStatus.Complete
+        rootSetupState.isRunning -> RootSetupProgressStepStatus.Active
+        rootSetupState.issue == RootSetupIssue.TermuxNotInstalled ||
+            rootSetupState.issue == RootSetupIssue.Failed -> RootSetupProgressStepStatus.Attention
+        else -> RootSetupProgressStepStatus.Pending
+    }
+    val agentModeStepStatus = when {
+        rootSetupState.isReady || rootAgentModeReady -> RootSetupProgressStepStatus.Complete
+        rootSetupState.isRunning -> RootSetupProgressStepStatus.Active
+        rootSetupState.issue == RootSetupIssue.PermissionDenied ||
+            rootSetupState.issue == RootSetupIssue.Failed -> RootSetupProgressStepStatus.Attention
+        else -> RootSetupProgressStepStatus.Pending
+    }
+
+    SubPageScaffold(
+        title = tr(strings, "Root automatic setup", "Root 自动配置"),
+        onBack = onBack,
+    ) {
+        SettingsCardGroup {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(22.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .clip(CircleShape)
+                        .background(rootSetupProgressAccent(rootSetupState.issue).copy(alpha = 0.18f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (rootSetupState.isRunning) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(34.dp),
+                            strokeWidth = 3.dp,
+                            color = AetherPrimary,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = if (rootSetupState.isReady) Icons.Rounded.Check else Icons.Rounded.Terminal,
+                            contentDescription = null,
+                            tint = rootSetupProgressAccent(rootSetupState.issue),
+                            modifier = Modifier.size(34.dp),
+                        )
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    text = rootSetupProgressTitle(rootSetupState.issue, strings),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = AetherOnSurface,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = rootSetupProgressBody(rootSetupState.issue, strings),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AetherOnSurfaceVariant,
+                )
+                if (rootSetupState.detail.isNotBlank()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = rootSetupState.detail,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = AetherOnSurfaceVariant,
+                        maxLines = 4,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        SettingsCardGroup {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                RootSetupProgressStep(
+                    title = tr(strings, "Root access", "Root 访问"),
+                    subtitle = tr(strings, "Detect su and wait for authorization.", "检测 su 并等待授权。"),
+                    status = rootStepStatus,
+                )
+                RootSetupProgressStep(
+                    title = tr(strings, "Termux command access", "Termux 命令访问"),
+                    subtitle = tr(strings, "Enable external apps and grant command permission.", "启用外部应用并授予命令权限。"),
+                    status = termuxStepStatus,
+                )
+                RootSetupProgressStep(
+                    title = tr(strings, "Root Agent Mode", "Root Agent Mode"),
+                    subtitle = tr(strings, "Select Root authorization for local device control.", "为本地设备控制选择 Root 授权。"),
+                    status = agentModeStepStatus,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        when {
+            rootSetupState.isRunning -> SettingsSubtleActionButton(
+                label = tr(strings, "Back", "返回"),
+                onClick = onBack,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            rootSetupState.isReady -> Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                SettingsSubtleActionButton(
+                    label = tr(strings, "Run again", "重新执行"),
+                    onClick = onRunRootSetup,
+                    modifier = Modifier.weight(1f),
+                )
+                SettingsActionButton(
+                    label = tr(strings, "Done", "完成"),
+                    onClick = onBack,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            else -> Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                SettingsSubtleActionButton(
+                    label = tr(strings, "Back", "返回"),
+                    onClick = onBack,
+                    modifier = Modifier.weight(1f),
+                )
+                SettingsActionButton(
+                    label = tr(strings, "Try again", "重试"),
+                    onClick = onRunRootSetup,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RootSetupProgressStep(
+    title: String,
+    subtitle: String,
+    status: RootSetupProgressStepStatus,
+) {
+    val (containerColor, contentColor) = when (status) {
+        RootSetupProgressStepStatus.Complete -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f) to AetherPrimary
+        RootSetupProgressStepStatus.Active -> AetherPrimary.copy(alpha = 0.16f) to AetherPrimary
+        RootSetupProgressStepStatus.Attention -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.64f) to MaterialTheme.colorScheme.error
+        RootSetupProgressStepStatus.Pending -> AetherSurface to AetherOnSurfaceVariant
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(AetherSurface)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(containerColor),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (status == RootSetupProgressStepStatus.Active) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = contentColor,
+                )
+            } else {
+                Icon(
+                    imageVector = when (status) {
+                        RootSetupProgressStepStatus.Complete -> Icons.Rounded.Check
+                        RootSetupProgressStepStatus.Attention -> Icons.Rounded.Info
+                        RootSetupProgressStepStatus.Pending,
+                        RootSetupProgressStepStatus.Active -> Icons.Rounded.Refresh
+                    },
+                    contentDescription = null,
+                    tint = contentColor,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = AetherOnSurface,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = AetherOnSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun rootSetupProgressAccent(issue: RootSetupIssue): Color = when (issue) {
+    RootSetupIssue.Ready -> AetherPrimary
+    RootSetupIssue.Running,
+    RootSetupIssue.Available -> AetherPrimary
+    RootSetupIssue.PermissionDenied,
+    RootSetupIssue.TermuxNotInstalled,
+    RootSetupIssue.Failed -> MaterialTheme.colorScheme.error
+    RootSetupIssue.Unknown,
+    RootSetupIssue.Unavailable -> AetherOnSurfaceVariant
+}
+
+private fun rootSetupProgressTitle(
+    issue: RootSetupIssue,
+    strings: AetherStrings,
+): String = when (issue) {
+    RootSetupIssue.Running -> tr(strings, "Configuring Root setup", "正在执行 Root 自动配置")
+    RootSetupIssue.Ready -> tr(strings, "Root setup completed", "Root 自动配置已完成")
+    RootSetupIssue.Available -> tr(strings, "Ready to start", "准备开始")
+    RootSetupIssue.Unavailable -> tr(strings, "Root is unavailable", "Root 不可用")
+    RootSetupIssue.PermissionDenied -> tr(strings, "Root authorization was not granted", "未获得 Root 授权")
+    RootSetupIssue.TermuxNotInstalled -> tr(strings, "Termux is required", "需要安装 Termux")
+    RootSetupIssue.Failed -> tr(strings, "Setup did not complete", "配置未完成")
+    RootSetupIssue.Unknown -> tr(strings, "Preparing setup", "正在准备配置")
+}
+
+private fun rootSetupProgressBody(
+    issue: RootSetupIssue,
+    strings: AetherStrings,
+): String = when (issue) {
+    RootSetupIssue.Running -> tr(
+        strings,
+        "Aether is requesting su, enabling Termux command access, and preparing Root Agent Mode.",
+        "Aether 正在请求 su、启用 Termux 命令访问，并准备 Root Agent Mode。",
+    )
+
+    RootSetupIssue.Ready -> tr(
+        strings,
+        "Termux command access and Root Agent Mode authorization are ready.",
+        "Termux 命令访问和 Root Agent Mode 授权已经就绪。",
+    )
+
+    RootSetupIssue.Available,
+    RootSetupIssue.Unknown -> tr(
+        strings,
+        "Start setup to grant su and finish the local access configuration.",
+        "开始配置后会请求 su，并完成本地访问配置。",
+    )
+
+    RootSetupIssue.Unavailable -> tr(
+        strings,
+        "No su binary was detected on this device.",
+        "当前设备未检测到 su。",
+    )
+
+    RootSetupIssue.PermissionDenied -> tr(
+        strings,
+        "Grant su to Aether, then try Root automatic setup again.",
+        "请授予 Aether su 权限后重试 Root 自动配置。",
+    )
+
+    RootSetupIssue.TermuxNotInstalled -> tr(
+        strings,
+        "Install Termux first, then return to this setup.",
+        "请先安装 Termux，然后返回继续配置。",
+    )
+
+    RootSetupIssue.Failed -> tr(
+        strings,
+        "The setup command finished with an error. Review the detail above and retry when ready.",
+        "配置命令返回错误。请查看上方详情后重试。",
+    )
 }
 
 @Composable
@@ -2636,6 +3106,18 @@ private fun AgentModeAuthorizationNotice(
 ) {
     val strings = rememberAetherStrings()
     val statusText = when {
+        enabled && method == AgentModeAuthorizationMethod.Root -> when (state.issue) {
+            AgentModeAuthorizationIssue.Ready -> tr(strings, "Root authorization is ready.", "Root authorization is ready.")
+            AgentModeAuthorizationIssue.RootUnavailable -> tr(strings, "No su binary was detected on this device.", "No su binary was detected on this device.")
+            AgentModeAuthorizationIssue.RootPermissionMissing -> tr(strings, "Grant su to Aether, then refresh this status.", "Grant su to Aether, then refresh this status.")
+            AgentModeAuthorizationIssue.RootPermissionDenied -> tr(strings, "Root authorization was denied. Grant su to Aether, then refresh this status.", "Root authorization was denied. Grant su to Aether, then refresh this status.")
+            AgentModeAuthorizationIssue.Error -> state.detail.ifBlank {
+                tr(strings, "Unable to inspect Root status.", "Unable to inspect Root status.")
+            }
+            else -> state.detail.ifBlank {
+                tr(strings, "Refresh Root status before using Agent Mode.", "Refresh Root status before using Agent Mode.")
+            }
+        }
         !enabled -> tr(strings, "Agent Mode authorization is off.", "Agent 模式授权已关闭。")
         method == AgentModeAuthorizationMethod.Root -> tr(strings, "Root mode will request su when Agent Mode starts.", "Root 模式会在启动 Agent 模式时请求 su。")
         else -> when (state.issue) {
@@ -2645,6 +3127,11 @@ private fun AgentModeAuthorizationNotice(
             AgentModeAuthorizationIssue.ShizukuPermissionMissing -> tr(strings, "Grant Aether permission in Shizuku before using Agent Mode.", "使用 Agent 模式前，请先在 Shizuku 中授予 Aether 权限。")
             AgentModeAuthorizationIssue.ShizukuPermissionDenied -> tr(strings, "Shizuku permission was denied. Request it again or enable Aether inside Shizuku.", "Shizuku 权限被拒绝。请重新请求授权，或在 Shizuku 中启用 Aether。")
             AgentModeAuthorizationIssue.Disabled -> tr(strings, "Save Agent Mode settings, then refresh Shizuku status.", "保存 Agent 模式设置后，再刷新 Shizuku 状态。")
+            AgentModeAuthorizationIssue.RootUnavailable,
+            AgentModeAuthorizationIssue.RootPermissionMissing,
+            AgentModeAuthorizationIssue.RootPermissionDenied -> state.detail.ifBlank {
+                tr(strings, "Switch to Root mode to inspect Root status.", "Switch to Root mode to inspect Root status.")
+            }
             AgentModeAuthorizationIssue.Error -> state.detail.ifBlank {
                 tr(strings, "Unable to inspect Shizuku status.", "无法检查 Shizuku 状态。")
             }
@@ -2706,6 +3193,7 @@ private fun DeveloperSettingsPage(
     onReplayFollowUpOnboarding: () -> Unit,
     onImportAppData: () -> Unit,
     onExportAppData: () -> Unit,
+    onExportLogs: () -> Unit,
     onForceUpdateCheckForTesting: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -2734,15 +3222,39 @@ private fun DeveloperSettingsPage(
                     color = AetherOnSurfaceVariant,
                 )
                 Spacer(Modifier.height(16.dp))
-                SettingsActionButton(
+                SettingsSubtleActionButton(
                     label = tr(strings, "Import app data", "导入应用数据"),
                     onClick = onImportAppData,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(10.dp))
-                SettingsActionButton(
+                SettingsSubtleActionButton(
                     label = tr(strings, "Export app data", "导出应用数据"),
                     onClick = onExportAppData,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        SettingsCardGroup {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = tr(strings, "Logs", "日志"),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = AetherOnSurface,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = tr(strings, "Export recent Aether logcat output and diagnostic metadata.", "导出近期 Aether logcat 输出和诊断信息。"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AetherOnSurfaceVariant,
+                )
+                Spacer(Modifier.height(16.dp))
+                SettingsSubtleActionButton(
+                    label = tr(strings, "Export logs", "导出日志"),
+                    onClick = onExportLogs,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -2768,7 +3280,7 @@ private fun DeveloperSettingsPage(
                     color = AetherOnSurfaceVariant,
                 )
                 Spacer(Modifier.height(16.dp))
-                SettingsActionButton(
+                SettingsSubtleActionButton(
                     label = tr(strings, "Force update prompt", "Force update prompt"),
                     onClick = onForceUpdateCheckForTesting,
                     modifier = Modifier.fillMaxWidth(),
@@ -2792,7 +3304,7 @@ private fun DeveloperSettingsPage(
                     color = AetherOnSurfaceVariant,
                 )
                 Spacer(Modifier.height(16.dp))
-                SettingsActionButton(
+                SettingsSubtleActionButton(
                     label = tr(strings, "Replay second part", "重播第二部分"),
                     onClick = onReplayFollowUpOnboarding,
                     modifier = Modifier.fillMaxWidth(),

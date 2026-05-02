@@ -196,6 +196,7 @@ fun OnboardingScreen(
     onRefreshRootSetup: () -> Unit,
     onConfigureWithRoot: () -> Unit,
     onSaveAgentModeAuthorization: (Boolean, AgentModeAuthorizationMethod) -> Unit,
+    onCompleteFollowUp: () -> Unit,
     onExploreSettings: () -> Unit,
 ) {
     val strings = rememberAetherStrings()
@@ -344,7 +345,7 @@ fun OnboardingScreen(
                 lineTwo = tr(strings, "This is where Aether grows beyond local tools.", "这里是 Aether 超出本地工具能力的入口。"),
                 chips = listOf(tr(strings, "Docs", "文档"), tr(strings, "Search", "搜索"), "APIs"),
                 primaryLabel = strings.done,
-                onPrimary = onClose,
+                onPrimary = onCompleteFollowUp,
                 secondaryLabel = tr(strings, "Open settings", "打开设置"),
                 onSecondary = onExploreSettings,
                 tertiaryLabel = strings.back,

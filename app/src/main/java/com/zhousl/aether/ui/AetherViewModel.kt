@@ -5,10 +5,10 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.posthog.PostHog
 import com.zhousl.aether.BuildConfig
 import com.zhousl.aether.aetherRuntime
 import com.zhousl.aether.data.ActiveSkillContext
+import com.zhousl.aether.data.AetherAnalytics
 import com.zhousl.aether.data.AppUpdateManager
 import com.zhousl.aether.data.AutomaticModelPurpose
 import com.zhousl.aether.data.AgentModeAuthorizationMethod
@@ -22,9 +22,9 @@ import com.zhousl.aether.data.LlmProvider
 import com.zhousl.aether.data.LlmProviderConfig
 import com.zhousl.aether.data.ProviderModelOption
 import com.zhousl.aether.data.availableModelOptions
-import com.zhousl.aether.data.findModelOption
 import com.zhousl.aether.data.McpClientManager
 import com.zhousl.aether.data.McpServerConfig
+import com.zhousl.aether.data.normalizeSelectableModelKey
 import com.zhousl.aether.data.normalizeLlmInactivityReconnectTimeoutSeconds
 import com.zhousl.aether.data.OnboardingStarterPrompt
 import com.zhousl.aether.data.OpenAiCompatibleClient
@@ -35,11 +35,9 @@ import com.zhousl.aether.data.SessionTurnEvent
 import com.zhousl.aether.data.SessionTurnOutcome
 import com.zhousl.aether.data.SessionTurnRequest
 import com.zhousl.aether.data.parseChatSessions
-import com.zhousl.aether.data.parseInstalledSkills
 import com.zhousl.aether.data.parseMcpServerConfigs
 import com.zhousl.aether.data.parseProviderConfigs
 import com.zhousl.aether.data.serializeChatSessions
-import com.zhousl.aether.data.serializeInstalledSkills
 import com.zhousl.aether.data.serializeMcpServerConfigs
 import com.zhousl.aether.data.serializeProviderConfigs
 import com.zhousl.aether.data.toJson
@@ -49,8 +47,12 @@ import com.zhousl.aether.data.isOnboardingComplete
 import com.zhousl.aether.data.shouldMarkOnboardingCompleted
 import com.zhousl.aether.data.shouldLaunchOnboarding
 import com.zhousl.aether.data.shouldRevealFollowUpTourCard
+import com.zhousl.aether.data.resolveDefaultChatModelKey
+import com.zhousl.aether.data.resolveDefaultTitleModelKey
 import com.zhousl.aether.data.resolveAutomaticModelKey
-import com.zhousl.aether.data.withModelOption
+import com.zhousl.aether.data.resolveModelSettings
+import com.zhousl.aether.data.resolveStoredOrAutomaticModelKey
+import com.zhousl.aether.termux.TermuxSetupIssue
 import com.zhousl.aether.termux.TermuxSetupState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -64,9 +66,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
 private const val FollowUpTourAutoOpenDelayMillis = 2_500L
 private const val AppUpdateCheckIntervalMillis = 3L * 24L * 60L * 60L * 1000L
+private const val LogcatReadTimeoutSeconds = 4L
 private const val SessionTitleSystemPrompt =
     "Generate a concise chat title for this conversation. Return only the title, in the user's language when possible, with no quotes, no emoji, and at most 6 words."
 
@@ -87,6 +91,8 @@ class AetherViewModel(
     private val mcpClientManager = McpClientManager(bashTool = bashTool)
     private val appUpdateManager = AppUpdateManager(application.applicationContext)
     private var didEvaluateStartupUpdateCheck = false
+    private var lastTrackedTermuxDetectedIssue: TermuxSetupIssue? = null
+    private var pendingTermuxSetupSource: String? = null
     private val _uiState = MutableStateFlow(AetherUiState())
     private val _transientMessages = MutableSharedFlow<String>(extraBufferCapacity = 4)
 
@@ -141,13 +147,13 @@ class AetherViewModel(
                         pendingResponseBlocks = currentExecution?.pendingResponseBlocks.orEmpty(),
                         pendingAssistantText = currentExecution?.pendingAssistantText.orEmpty(),
                         pendingStatusText = currentExecution?.pendingStatusText.orEmpty(),
+                        pendingStatusDetail = currentExecution?.pendingStatusDetail.orEmpty(),
                     )
                 }
             }
         }
 
         viewModelScope.launch {
-                        pendingStatusDetail = currentExecution?.pendingStatusDetail.orEmpty(),
             sessionExecutionManager.executionStates.collect { executionStates ->
                 _uiState.update { current ->
                     val currentExecution = executionStates[current.currentSessionId]
@@ -159,13 +165,13 @@ class AetherViewModel(
                         pendingResponseBlocks = currentExecution?.pendingResponseBlocks.orEmpty(),
                         pendingAssistantText = currentExecution?.pendingAssistantText.orEmpty(),
                         pendingStatusText = currentExecution?.pendingStatusText.orEmpty(),
+                        pendingStatusDetail = currentExecution?.pendingStatusDetail.orEmpty(),
                     )
                 }
             }
         }
 
         viewModelScope.launch {
-                        pendingStatusDetail = currentExecution?.pendingStatusDetail.orEmpty(),
             sessionExecutionManager.turnEvents.collect { event ->
                 handleTurnEvent(event)
             }
@@ -174,15 +180,15 @@ class AetherViewModel(
         viewModelScope.launch {
             extensionsRepository.extensionState.collect { extensionState ->
                 var didPruneSelections = false
+                val enabledSkillIds = extensionState.installedSkills
+                    .filter { it.isEnabled }
+                    .map { it.id }
+                    .toSet()
+                val enabledMcpServerIds = extensionState.mcpServers
+                    .filter { it.isEnabled }
+                    .map { it.id }
+                    .toSet()
                 _uiState.update { current ->
-                    val enabledSkillIds = extensionState.installedSkills
-                        .filter { it.isEnabled }
-                        .map { it.id }
-                        .toSet()
-                    val enabledMcpServerIds = extensionState.mcpServers
-                        .filter { it.isEnabled }
-                        .map { it.id }
-                        .toSet()
                     val updatedSessions = current.sessions.map { session ->
                         val updatedSelectedSkillIds = session.selectedSkillIds.filter(enabledSkillIds::contains)
                         val updatedActiveSkills = session.activeSkills.filter { activeSkill ->
@@ -221,7 +227,10 @@ class AetherViewModel(
                     )
                 }
                 if (didPruneSelections) {
-                    persistChats()
+                    persistPrunedSessionSelections(
+                        enabledSkillIds = enabledSkillIds,
+                        enabledMcpServerIds = enabledMcpServerIds,
+                    )
                 }
             }
         }
@@ -255,6 +264,7 @@ class AetherViewModel(
             val setupState = withContext(Dispatchers.IO) {
                 inspectTermuxSetupWithRootRepair()
             }
+            trackTermuxSetupState(setupState, source = "refresh")
             _uiState.update { current -> current.copy(termuxSetupState = setupState) }
         }
     }
@@ -280,6 +290,11 @@ class AetherViewModel(
     fun configureLocalAccessWithRoot() {
         val currentRootState = _uiState.value.rootSetupState
         if (currentRootState.isRunning) return
+        trackTermuxSetupStarted(source = "root_setup")
+        trackPermissionRequested(
+            permission = "root_su",
+            source = "root_setup",
+        )
         _uiState.update { current ->
             current.copy(
                 rootSetupState = RootSetupState(
@@ -293,6 +308,12 @@ class AetherViewModel(
         }
         viewModelScope.launch {
             val rootState = rootSetupController.configureLocalAccess()
+            trackPermissionResult(
+                permission = "root_su",
+                granted = rootState.isReady,
+                source = "root_setup",
+                result = rootState.issue.name.lowercase(),
+            )
             if (rootState.isReady) {
                 val settings = _uiState.value.settings
                 settingsRepository.updateSettings(
@@ -309,11 +330,15 @@ class AetherViewModel(
                 )
             }
             val setupState = withContext(Dispatchers.IO) { bashTool.inspectSetup() }
+            trackTermuxSetupState(setupState, source = "root_setup")
             _uiState.update { current ->
                 current.copy(
                     rootSetupState = rootState,
                     termuxSetupState = setupState,
                 )
+            }
+            if (rootState.didLaunchTermuxForBackground) {
+                emitTransientMessage(termuxBackgroundLaunchMessage())
             }
             emitTransientMessage(
                 if (rootState.isReady) {
@@ -322,6 +347,22 @@ class AetherViewModel(
                     "Root setup failed: ${rootState.detail.ifBlank { rootState.issue.name }}"
                 }
             )
+        }
+    }
+
+    fun startRootSetupFromSettings(returnPage: RootSetupProgressReturnPage) {
+        _uiState.update { current ->
+            current.copy(
+                currentScreen = AppScreen.Settings,
+                rootSetupProgressReturnPage = returnPage,
+            )
+        }
+        configureLocalAccessWithRoot()
+    }
+
+    fun dismissRootSetupProgress() {
+        _uiState.update { current ->
+            current.copy(rootSetupProgressReturnPage = null)
         }
     }
 
@@ -337,8 +378,22 @@ class AetherViewModel(
             return setupState
         }
 
+        trackTermuxSetupStarted(source = "automatic_root_repair")
+        trackPermissionRequested(
+            permission = "root_su",
+            source = "automatic_root_repair",
+        )
         val repairedRootState = rootSetupController.configureLocalAccess()
+        trackPermissionResult(
+            permission = "root_su",
+            granted = repairedRootState.isReady,
+            source = "automatic_root_repair",
+            result = repairedRootState.issue.name.lowercase(),
+        )
         _uiState.update { current -> current.copy(rootSetupState = repairedRootState) }
+        if (repairedRootState.didLaunchTermuxForBackground) {
+            emitTransientMessage(termuxBackgroundLaunchMessage())
+        }
         return if (repairedRootState.isReady) {
             bashTool.inspectSetup()
         } else {
@@ -363,13 +418,57 @@ class AetherViewModel(
     }
 
     fun refreshAgentModeAuthorization() {
-        agentModeController.refreshAuthorization(_uiState.value.settings)
+        viewModelScope.launch {
+            agentModeController.refreshAuthorization(_uiState.value.settings)
+        }
     }
 
     fun requestShizukuPermission() {
         _uiState.update { current ->
             current.copy(agentModeAuthorizationState = agentModeController.requestShizukuPermission())
         }
+    }
+
+    fun trackTermuxSetupStarted(source: String) {
+        pendingTermuxSetupSource = source
+        captureAnalyticsEvent(
+            event = "termux setup started",
+            properties = mapOf(
+                "source" to source,
+                "current_issue" to _uiState.value.termuxSetupState.issue.name.lowercase(),
+                "is_ready" to _uiState.value.termuxSetupState.isReady,
+            ),
+        )
+    }
+
+    fun trackPermissionRequested(
+        permission: String,
+        source: String,
+    ) {
+        captureAnalyticsEvent(
+            event = "permission requested",
+            properties = mapOf(
+                "permission" to permission,
+                "source" to source,
+            ),
+        )
+    }
+
+    fun trackPermissionResult(
+        permission: String,
+        granted: Boolean,
+        source: String,
+        result: String = if (granted) "granted" else "denied",
+    ) {
+        captureAnalyticsEvent(
+            event = "permission result",
+            properties = mapOf(
+                "permission" to permission,
+                "source" to source,
+                "granted" to granted,
+                "result" to result,
+            ),
+        )
     }
 
     fun checkForUpdates() {
@@ -533,6 +632,22 @@ class AetherViewModel(
         }
     }
 
+    fun completeFollowUpOnboarding() {
+        captureAnalyticsEvent(
+            event = "onboarding follow up completed",
+            properties = mapOf(
+                "section" to "follow_up",
+                "source" to if (_uiState.value.isOnboardingReplay) "replay" else "auto",
+                "termux_ready" to _uiState.value.termuxSetupState.isReady,
+                "agent_mode_authorized" to _uiState.value.agentModeAuthorizationState.isReady,
+                "tavily_configured" to _uiState.value.settings.tavilyApiKey.isNotBlank(),
+                "skill_count" to _uiState.value.installedSkills.size,
+                "mcp_server_count" to _uiState.value.mcpServers.size,
+            ),
+        )
+        closeOnboarding()
+    }
+
     fun completeOnboardingProviderSetup(config: LlmProviderConfig) {
         viewModelScope.launch {
             val enabledConfig = config.copy(isEnabled = true)
@@ -564,10 +679,19 @@ class AetherViewModel(
                     showFollowUpTourCard = false,
                 )
             }
-            persistChats()
+            persistCurrentSessionId(DraftSessionId)
             captureAnalyticsEvent(
                 event = "onboarding completed",
                 properties = mapOf(
+                    "section" to "initial",
+                    "provider" to enabledConfig.providerType.displayName,
+                    "provider_id" to enabledConfig.id,
+                ),
+            )
+            captureAnalyticsEvent(
+                event = "onboarding initial completed",
+                properties = mapOf(
+                    "section" to "initial",
                     "provider" to enabledConfig.providerType.displayName,
                     "provider_id" to enabledConfig.id,
                 ),
@@ -690,7 +814,12 @@ class AetherViewModel(
     }
 
     fun closeSettings() {
-        _uiState.update { it.copy(currentScreen = AppScreen.Chat) }
+        _uiState.update {
+            it.copy(
+                currentScreen = AppScreen.Chat,
+                rootSetupProgressReturnPage = null,
+            )
+        }
     }
 
     fun startNewChat() {
@@ -711,7 +840,7 @@ class AetherViewModel(
                 showStarterPromptHint = false,
             )
         }
-        persistChats()
+        persistCurrentSessionId(DraftSessionId)
         captureAnalyticsEvent(event = "conversation started")
     }
 
@@ -733,7 +862,7 @@ class AetherViewModel(
                 showStarterPromptHint = false,
             )
         }
-        persistChats()
+        persistCurrentSessionId(sessionId)
     }
 
     fun renameSession(
@@ -778,7 +907,7 @@ class AetherViewModel(
             )
         }
         if (didUpdate) {
-            persistChats()
+            persistDeleteSession(sessionId)
             captureAnalyticsEvent(event = "conversation deleted")
         }
     }
@@ -817,12 +946,27 @@ class AetherViewModel(
         }
     }
 
+    fun exportLogsToUri(destinationUri: Uri) {
+        val snapshot = _uiState.value
+        viewModelScope.launch {
+            val didExport = withContext(Dispatchers.IO) {
+                writeTextToUri(
+                    uri = destinationUri,
+                    text = buildDiagnosticLogText(snapshot),
+                )
+            }
+            emitTransientMessage(if (didExport) "Logs exported" else "Couldn't export logs")
+        }
+    }
+
     fun importAllDataFromUri(sourceUri: Uri) {
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val rawValue = readTextFromUri(sourceUri)
-                    parseFullAppImport(JSONObject(rawValue))
+                    val json = JSONObject(rawValue)
+                    val importedSkills = skillManager.importSkillBundles(json.optJSONArray("skillBundles"))
+                    parseFullAppImport(json, importedSkills)
                 }
             }
             result
@@ -833,7 +977,7 @@ class AetherViewModel(
                     )
                     extensionsRepository.updateInstalledSkills(imported.installedSkills)
                     extensionsRepository.updateMcpServers(imported.mcpServers)
-                    chatStateStore.update {
+                    chatStateStore.updateAndFlush {
                         it.copy(
                             sessions = imported.sessions,
                             currentSessionId = imported.currentSessionId,
@@ -893,7 +1037,7 @@ class AetherViewModel(
                 showStarterPromptHint = false,
             )
         }
-        persistChats()
+        persistCurrentSessionId(sessionId)
     }
 
     fun cancelMessageEdit() {
@@ -926,6 +1070,8 @@ class AetherViewModel(
         if (sessionExecutionManager.isSessionRunning(sessionId)) return
 
         var didUpdate = false
+        var updatedSessionForPersistence: ChatSession? = null
+        var removedSessionForPersistence = false
 
         _uiState.update { current ->
             val sessionIndex = current.sessions.indexOfFirst { it.id == sessionId }
@@ -940,7 +1086,11 @@ class AetherViewModel(
             val updatedSessions = current.sessions.toMutableList().apply {
                 removeAt(sessionIndex)
                 if (trimmedMessages.isNotEmpty()) {
-                    add(sessionIndex.coerceAtMost(size), session.withMessages(trimmedMessages))
+                    val updatedSession = session.withMessages(trimmedMessages)
+                    updatedSessionForPersistence = updatedSession
+                    add(sessionIndex.coerceAtMost(size), updatedSession)
+                } else {
+                    removedSessionForPersistence = true
                 }
             }
 
@@ -984,7 +1134,11 @@ class AetherViewModel(
         }
 
         if (didUpdate) {
-            persistChats()
+            if (removedSessionForPersistence) {
+                persistDeleteSession(sessionId)
+            } else {
+                updatedSessionForPersistence?.let(::persistSessionSnapshot)
+            }
         }
     }
 
@@ -996,6 +1150,7 @@ class AetherViewModel(
 
         val snapshot = _uiState.value
         var request: SessionTurnRequest? = null
+        var updatedSessionForPersistence: ChatSession? = null
 
         _uiState.update { current ->
             val sessionIndex = current.sessions.indexOfFirst { it.id == sessionId }
@@ -1029,7 +1184,9 @@ class AetherViewModel(
             )
             val updatedSessions = current.sessions.toMutableList().apply {
                 removeAt(sessionIndex)
-                add(0, session.withMessages(trimmedMessages))
+                val updatedSession = session.withMessages(trimmedMessages)
+                updatedSessionForPersistence = updatedSession
+                add(0, updatedSession)
             }
 
             current.copy(
@@ -1045,7 +1202,13 @@ class AetherViewModel(
         }
 
         val turnRequest = request ?: return
-        persistChats()
+        updatedSessionForPersistence?.let { session ->
+            persistSessionSnapshot(
+                session = session,
+                currentSessionId = sessionId,
+                moveToFront = true,
+            )
+        }
         sessionExecutionManager.startTurn(turnRequest)
     }
 
@@ -1057,6 +1220,7 @@ class AetherViewModel(
 
         val snapshot = _uiState.value
         var request: SessionTurnRequest? = null
+        var updatedSessionForPersistence: ChatSession? = null
 
         _uiState.update { current ->
             val sessionIndex = current.sessions.indexOfFirst { it.id == sessionId }
@@ -1078,6 +1242,7 @@ class AetherViewModel(
                 replacement = retryMessage,
             ) ?: return@update current
             val updatedSession = session.withMessages(branchedMessages)
+            updatedSessionForPersistence = updatedSession
             val updatedSessions = current.sessions.toMutableList().apply {
                 removeAt(sessionIndex)
                 add(0, updatedSession)
@@ -1111,7 +1276,13 @@ class AetherViewModel(
         }
 
         val turnRequest = request ?: return
-        persistChats()
+        updatedSessionForPersistence?.let { session ->
+            persistSessionSnapshot(
+                session = session,
+                currentSessionId = sessionId,
+                moveToFront = true,
+            )
+        }
         sessionExecutionManager.startTurn(turnRequest)
     }
 
@@ -1122,6 +1293,7 @@ class AetherViewModel(
     ) {
         if (sessionExecutionManager.isSessionRunning(sessionId)) return
         var didUpdate = false
+        var updatedSessionForPersistence: ChatSession? = null
 
         _uiState.update { current ->
             val sessionIndex = current.sessions.indexOfFirst { it.id == sessionId }
@@ -1134,6 +1306,7 @@ class AetherViewModel(
             ) ?: return@update current
             didUpdate = true
             val updatedSession = session.withMessages(updatedMessages)
+            updatedSessionForPersistence = updatedSession
             val updatedSessions = current.sessions.toMutableList().apply {
                 set(sessionIndex, updatedSession)
             }
@@ -1141,7 +1314,7 @@ class AetherViewModel(
         }
 
         if (didUpdate) {
-            persistChats()
+            updatedSessionForPersistence?.let(::persistSessionSnapshot)
         }
     }
 
@@ -1255,6 +1428,7 @@ class AetherViewModel(
 
     fun setCurrentChatModelSelection(modelKey: String) {
         var didUpdate = false
+        var sessionIdForPersistence: String? = null
         _uiState.update { current ->
             if (current.currentSessionId == DraftSessionId) {
                 if (current.draftSelectedModelKey == modelKey) return@update current
@@ -1265,15 +1439,24 @@ class AetherViewModel(
                 if (sessionIndex < 0) return@update current
                 val session = current.sessions[sessionIndex]
                 if (session.selectedModelKey == modelKey) return@update current
+                val updatedSession = session.copy(selectedModelKey = modelKey)
                 val updatedSessions = current.sessions.toMutableList().apply {
-                    set(sessionIndex, session.copy(selectedModelKey = modelKey))
+                    set(sessionIndex, updatedSession)
                 }
+                sessionIdForPersistence = current.currentSessionId
                 didUpdate = true
                 current.copy(sessions = updatedSessions)
             }
         }
-        if (didUpdate) {
-            persistChats()
+        val persistedSessionId = sessionIdForPersistence
+        if (didUpdate && persistedSessionId != null) {
+            persistSessionMutation(persistedSessionId) { session ->
+                if (session.selectedModelKey == modelKey) {
+                    null
+                } else {
+                    session.copy(selectedModelKey = modelKey)
+                }
+            }
         }
     }
 
@@ -1285,14 +1468,6 @@ class AetherViewModel(
         viewModelScope.launch {
             val result = LlmApiClient.fetchModels(config)
             _uiState.update { it.copy(isFetchingModels = false) }
-            if (result.models.isNotEmpty()) {
-                settingsRepository.upsertProviderConfig(
-                    mergeFetchedModels(
-                        current = config,
-                        fetchedModels = result.models,
-                    )
-                )
-            }
             onComplete(result.models)
             if (result.error != null) {
                 _transientMessages.emit("Failed to fetch models: ${result.error}")
@@ -1379,6 +1554,7 @@ class AetherViewModel(
         selected: Boolean,
     ) {
         var didUpdate = false
+        var sessionIdForPersistence: String? = null
         _uiState.update { current ->
             if (current.currentSessionId == DraftSessionId) {
                 val updatedDraftSelection = updateOrderedSelection(
@@ -1413,19 +1589,42 @@ class AetherViewModel(
                     current
                 } else {
                     didUpdate = true
+                    val updatedSession = session.copy(
+                        selectedSkillIds = updatedSelectedSkillIds,
+                        activeSkills = updatedActiveSkills,
+                    )
+                    sessionIdForPersistence = current.currentSessionId
                     updatedSessions.add(
                         sessionIndex.coerceAtMost(updatedSessions.size),
-                        session.copy(
-                            selectedSkillIds = updatedSelectedSkillIds,
-                            activeSkills = updatedActiveSkills,
-                        ),
+                        updatedSession,
                     )
                     current.copy(sessions = updatedSessions)
                 }
             }
         }
-        if (didUpdate && _uiState.value.currentSessionId != DraftSessionId) {
-            persistChats()
+        val persistedSessionId = sessionIdForPersistence
+        if (didUpdate && persistedSessionId != null) {
+            persistSessionMutation(persistedSessionId) { session ->
+                val selectedSkillIds = updateOrderedSelection(
+                    session.selectedSkillIds,
+                    skillId,
+                    selected,
+                )
+                val activeSkills = session.activeSkills.filter { activeSkill ->
+                    selectedSkillIds.contains(activeSkill.skillId)
+                }
+                if (
+                    selectedSkillIds == session.selectedSkillIds &&
+                    activeSkills == session.activeSkills
+                ) {
+                    null
+                } else {
+                    session.copy(
+                        selectedSkillIds = selectedSkillIds,
+                        activeSkills = activeSkills,
+                    )
+                }
+            }
         }
     }
 
@@ -1537,6 +1736,7 @@ class AetherViewModel(
         selected: Boolean,
     ) {
         var didUpdate = false
+        var sessionIdForPersistence: String? = null
         _uiState.update { current ->
             if (current.currentSessionId == DraftSessionId) {
                 val updatedDraftSelection = updateOrderedSelection(
@@ -1565,21 +1765,36 @@ class AetherViewModel(
                     current
                 } else {
                     didUpdate = true
+                    val updatedSession = session.copy(activeMcpServerIds = updatedActiveIds)
+                    sessionIdForPersistence = current.currentSessionId
                     updatedSessions.add(
                         sessionIndex.coerceAtMost(updatedSessions.size),
-                        session.copy(activeMcpServerIds = updatedActiveIds),
+                        updatedSession,
                     )
                     current.copy(sessions = updatedSessions)
                 }
             }
         }
-        if (didUpdate && _uiState.value.currentSessionId != DraftSessionId) {
-            persistChats()
+        val persistedSessionId = sessionIdForPersistence
+        if (didUpdate && persistedSessionId != null) {
+            persistSessionMutation(persistedSessionId) { session ->
+                val activeMcpServerIds = updateOrderedSelection(
+                    session.activeMcpServerIds,
+                    serverId,
+                    selected,
+                )
+                if (activeMcpServerIds == session.activeMcpServerIds) {
+                    null
+                } else {
+                    session.copy(activeMcpServerIds = activeMcpServerIds)
+                }
+            }
         }
     }
 
     fun setComposerAgentModeSelected(selected: Boolean) {
         var didUpdate = false
+        var sessionIdForPersistence: String? = null
         _uiState.update { current ->
             if (current.currentSessionId == DraftSessionId) {
                 if (current.draftAgentModeEnabled == selected) {
@@ -1598,16 +1813,25 @@ class AetherViewModel(
                     current
                 } else {
                     didUpdate = true
+                    val updatedSession = session.copy(agentModeEnabled = selected)
+                    sessionIdForPersistence = current.currentSessionId
                     updatedSessions.add(
                         sessionIndex.coerceAtMost(updatedSessions.size),
-                        session.copy(agentModeEnabled = selected),
+                        updatedSession,
                     )
                     current.copy(sessions = updatedSessions)
                 }
             }
         }
-        if (didUpdate && _uiState.value.currentSessionId != DraftSessionId) {
-            persistChats()
+        val persistedSessionId = sessionIdForPersistence
+        if (didUpdate && persistedSessionId != null) {
+            persistSessionMutation(persistedSessionId) { session ->
+                if (session.agentModeEnabled == selected) {
+                    null
+                } else {
+                    session.copy(agentModeEnabled = selected)
+                }
+            }
         }
         if (didUpdate) {
             captureAnalyticsEvent(
@@ -1698,6 +1922,7 @@ class AetherViewModel(
         var requestAgentModeEnabled = false
         var requestModelKey = ""
         var shouldGenerateSessionTitle = false
+        var sessionForPersistence: ChatSession? = null
 
         _uiState.update { current ->
             val updatedSessions = current.sessions.toMutableList()
@@ -1721,6 +1946,7 @@ class AetherViewModel(
                             replacement = userMessage,
                         ) ?: (editingSession.messages.take(editingMessageIndex) + userMessage)
                         val updated = editingSession.withMessages(branchedMessages)
+                        sessionForPersistence = updated
                         updatedSessions.add(0, updated)
                         requestMessages = updated.messages
                         requestSelectedSkillIds = updated.selectedSkillIds
@@ -1739,6 +1965,7 @@ class AetherViewModel(
                 if (existingIndex >= 0) {
                     val existing = updatedSessions.removeAt(existingIndex)
                     val updated = existing.withMessages(existing.messages + userMessage)
+                    sessionForPersistence = updated
                     updatedSessions.add(0, updated)
                     requestMessages = updated.messages
                     requestSelectedSkillIds = updated.selectedSkillIds
@@ -1760,6 +1987,7 @@ class AetherViewModel(
                         agentModeEnabled = current.draftAgentModeEnabled,
                     )
                     shouldGenerateSessionTitle = true
+                    sessionForPersistence = newSession
                     updatedSessions.add(0, newSession)
                     requestMessages = newSession.messages
                     requestSelectedSkillIds = newSession.selectedSkillIds
@@ -1803,7 +2031,13 @@ class AetherViewModel(
         }
 
         val turnRequest = request ?: return
-        persistChats()
+        sessionForPersistence?.let { session ->
+            persistSessionSnapshot(
+                session = session,
+                currentSessionId = targetSessionId,
+                moveToFront = true,
+            )
+        }
         captureMessageSent(
             request = turnRequest,
             attachments = attachments,
@@ -2000,69 +2234,106 @@ class AetherViewModel(
         }
     }
 
-    private fun persistChats() {
-        val snapshot = _uiState.value
+    private fun persistCurrentSessionId(sessionId: String) {
+        chatStateStore.update { persisted ->
+            persisted.copy(currentSessionId = sessionId)
+        }
+    }
+
+    private fun replacePersistedChats(
+        sessions: List<ChatSession>,
+        currentSessionId: String,
+    ) {
         chatStateStore.update { persisted ->
             persisted.copy(
-                sessions = snapshot.sessions,
-                currentSessionId = snapshot.currentSessionId,
+                sessions = sessions,
+                currentSessionId = currentSessionId,
             )
         }
     }
 
-    private fun normalizeSelectableModelKey(
-        modelKey: String,
-        options: List<ProviderModelOption>,
-    ): String = if (options.any { it.key == modelKey }) modelKey else ""
-
-    private fun resolveStoredOrAutomaticModelKey(
-        modelKey: String,
-        options: List<ProviderModelOption>,
-        purpose: AutomaticModelPurpose,
-        fallbackPurpose: AutomaticModelPurpose? = null,
-    ): String = normalizeSelectableModelKey(modelKey, options)
-        .ifBlank {
-            options.resolveAutomaticModelKey(purpose).ifBlank {
-                fallbackPurpose?.let(options::resolveAutomaticModelKey).orEmpty()
+    private fun persistSessionSnapshot(
+        session: ChatSession,
+        currentSessionId: String? = null,
+        moveToFront: Boolean = false,
+    ) {
+        chatStateStore.update { persisted ->
+            val currentIndex = persisted.sessions.indexOfFirst { it.id == session.id }
+            val updatedSessions = persisted.sessions.toMutableList().apply {
+                if (currentIndex >= 0) {
+                    removeAt(currentIndex)
+                }
+                val insertIndex = when {
+                    moveToFront -> 0
+                    currentIndex >= 0 -> currentIndex.coerceAtMost(size)
+                    else -> 0
+                }
+                add(insertIndex, session)
             }
+            persisted.copy(
+                sessions = updatedSessions,
+                currentSessionId = currentSessionId ?: persisted.currentSessionId,
+            )
         }
-
-    private fun resolveDefaultChatModelKey(
-        settings: AppSettings,
-        providerConfigs: List<LlmProviderConfig>,
-    ): String {
-        val options = providerConfigs.availableModelOptions()
-        return resolveStoredOrAutomaticModelKey(
-            modelKey = settings.defaultChatModelKey,
-            options = options,
-            purpose = AutomaticModelPurpose.Chat,
-        )
     }
 
-    private fun resolveDefaultTitleModelKey(
-        settings: AppSettings,
-        providerConfigs: List<LlmProviderConfig>,
-    ): String {
-        val options = providerConfigs.availableModelOptions()
-        return resolveStoredOrAutomaticModelKey(
-            modelKey = settings.defaultTitleModelKey,
-            options = options,
-            purpose = AutomaticModelPurpose.Title,
-            fallbackPurpose = AutomaticModelPurpose.Chat,
-        )
+    private fun persistSessionMutation(
+        sessionId: String,
+        transform: (ChatSession) -> ChatSession?,
+    ) {
+        chatStateStore.update { persisted ->
+            val sessionIndex = persisted.sessions.indexOfFirst { it.id == sessionId }
+            if (sessionIndex < 0) return@update persisted
+            val updatedSession = transform(persisted.sessions[sessionIndex]) ?: return@update persisted
+            val updatedSessions = persisted.sessions.toMutableList().apply {
+                set(sessionIndex, updatedSession)
+            }
+            persisted.copy(sessions = updatedSessions)
+        }
     }
 
-    private fun resolveModelSettings(
-        baseSettings: AppSettings,
-        providerConfigs: List<LlmProviderConfig>,
-        preferredModelKey: String,
-        fallbackModelKey: String,
-    ): AppSettings {
-        val options = providerConfigs.availableModelOptions()
-        val selectedOption = options.findModelOption(preferredModelKey)
-            ?: options.findModelOption(fallbackModelKey)
-            ?: options.firstOrNull()
-        return selectedOption?.let(baseSettings::withModelOption) ?: baseSettings
+    private fun persistDeleteSession(sessionId: String) {
+        chatStateStore.update { persisted ->
+            val updatedSessions = persisted.sessions.filterNot { it.id == sessionId }
+            persisted.copy(
+                sessions = updatedSessions,
+                currentSessionId = if (persisted.currentSessionId == sessionId) {
+                    DraftSessionId
+                } else {
+                    persisted.currentSessionId
+                },
+            )
+        }
+    }
+
+    private fun persistPrunedSessionSelections(
+        enabledSkillIds: Set<String>,
+        enabledMcpServerIds: Set<String>,
+    ) {
+        chatStateStore.update { persisted ->
+            persisted.copy(
+                sessions = persisted.sessions.map { session ->
+                    val selectedSkillIds = session.selectedSkillIds.filter(enabledSkillIds::contains)
+                    val activeSkills = session.activeSkills.filter { activeSkill ->
+                        selectedSkillIds.contains(activeSkill.skillId)
+                    }
+                    val activeMcpServerIds = session.activeMcpServerIds.filter(enabledMcpServerIds::contains)
+                    if (
+                        selectedSkillIds == session.selectedSkillIds &&
+                        activeSkills == session.activeSkills &&
+                        activeMcpServerIds == session.activeMcpServerIds
+                    ) {
+                        session
+                    } else {
+                        session.copy(
+                            selectedSkillIds = selectedSkillIds,
+                            activeSkills = activeSkills,
+                            activeMcpServerIds = activeMcpServerIds,
+                        )
+                    }
+                }
+            )
+        }
     }
 
     private fun buildAnalyticsTurnRequest(
@@ -2115,6 +2386,11 @@ class AetherViewModel(
                 "submission_type" to submissionType,
             ),
         )
+        captureAgentModeStarted(
+            request = request,
+            isEdit = isEdit,
+            submissionType = submissionType,
+        )
     }
 
     private fun captureTurnCompleted(event: SessionTurnEvent) {
@@ -2129,6 +2405,63 @@ class AetherViewModel(
                 "duration_millis" to (event.durationMillis ?: 0L),
             ),
         )
+    }
+
+    private fun trackTermuxSetupState(
+        setupState: TermuxSetupState,
+        source: String,
+    ) {
+        if (!_uiState.value.settings.privacyPolicyAccepted) return
+        if (setupState.issue != TermuxSetupIssue.NotInstalled &&
+            lastTrackedTermuxDetectedIssue != setupState.issue
+        ) {
+            lastTrackedTermuxDetectedIssue = setupState.issue
+            captureAnalyticsEvent(
+                event = "termux detected",
+                properties = mapOf(
+                    "source" to source,
+                    "issue" to setupState.issue.name.lowercase(),
+                    "is_ready" to setupState.isReady,
+                ),
+            )
+        }
+
+        val setupSource = pendingTermuxSetupSource ?: return
+        if (!setupState.isReady) return
+        pendingTermuxSetupSource = null
+        captureAnalyticsEvent(
+            event = "termux setup completed",
+            properties = mapOf(
+                "source" to setupSource,
+                "detected_source" to source,
+                "issue" to setupState.issue.name.lowercase(),
+            ),
+        )
+    }
+
+    private fun captureAgentModeStarted(
+        request: SessionTurnRequest,
+        isEdit: Boolean,
+        submissionType: String,
+    ) {
+        if (!request.agentModeEnabled) return
+        val properties = modelUsageProperties(request, source = "agent_mode") + mapOf(
+            "authorization_enabled" to request.settings.agentModeAuthorizationEnabled,
+            "authorization_method" to request.settings.agentModeAuthorizationMethod.storageValue,
+            "is_edit" to isEdit,
+            "submission_type" to submissionType,
+        )
+        if (request.settings.agentModeAuthorizationEnabled) {
+            captureAnalyticsEvent(
+                event = "agent mode started",
+                properties = properties,
+            )
+        } else {
+            captureAnalyticsEvent(
+                event = "agent mode failed",
+                properties = properties + mapOf("reason" to "authorization_disabled"),
+            )
+        }
     }
 
     private fun modelUsageProperties(
@@ -2148,13 +2481,7 @@ class AetherViewModel(
         event: String,
         properties: Map<String, Any> = emptyMap(),
     ) {
-        runCatching {
-            if (properties.isEmpty()) {
-                PostHog.capture(event = event)
-            } else {
-                PostHog.capture(event = event, properties = properties)
-            }
-        }
+        AetherAnalytics.capture(event = event, properties = properties)
     }
 
     private fun normalizeProviderConfig(
@@ -2228,12 +2555,11 @@ class AetherViewModel(
         val installedSkillsById = _uiState.value.installedSkills
             .filter { it.isEnabled }
             .associateBy { it.id }
-        val existingSkillsById = existingActiveSkills.associateBy { it.skillId }
         return buildList {
             selectedSkillIds.distinct().forEach { skillId ->
                 val installedSkill = installedSkillsById[skillId] ?: return@forEach
                 val refreshedSkill = skillManager.buildActiveSkillContext(installedSkill)
-                    .getOrElse { existingSkillsById[skillId] ?: return@forEach }
+                    .getOrElse { return@forEach }
                 add(refreshedSkill)
             }
         }
@@ -2323,7 +2649,7 @@ class AetherViewModel(
             }
         }
         if (didUpdate) {
-            persistChats()
+            persistSessionMutation(sessionId, transform)
         }
     }
 
@@ -2698,21 +3024,84 @@ class AetherViewModel(
             input.readBytes().toString(Charsets.UTF_8)
         } ?: error("Unable to read the selected file.")
 
+    private fun buildDiagnosticLogText(snapshot: AetherUiState): String = buildString {
+        appendLine("Aether diagnostic log")
+        appendLine("generatedAtMillis=${System.currentTimeMillis()}")
+        appendLine("versionName=${BuildConfig.VERSION_NAME}")
+        appendLine("versionCode=${BuildConfig.VERSION_CODE}")
+        appendLine("debug=${BuildConfig.DEBUG}")
+        appendLine("screen=${snapshot.currentScreen}")
+        appendLine("currentSessionId=${snapshot.currentSessionId}")
+        appendLine("sessionCount=${snapshot.sessions.size}")
+        appendLine("runningSessionCount=${snapshot.sessionExecutionStates.values.count { it.isRunning }}")
+        appendLine("provider=${snapshot.settings.provider.storageValue}")
+        appendLine("providerConfigCount=${snapshot.providerConfigs.size}")
+        appendLine("skillCount=${snapshot.installedSkills.size}")
+        appendLine("mcpServerCount=${snapshot.mcpServers.size}")
+        appendLine("termuxReady=${snapshot.termuxSetupState.isReady}")
+        appendLine("rootReady=${snapshot.rootSetupState.isReady}")
+        appendLine("agentModeAuthorized=${snapshot.agentModeAuthorizationState.isReady}")
+        appendLine()
+        appendLine("logcat:")
+        append(readLogcatDump())
+    }
+
+    private fun readLogcatDump(): String {
+        val pid = android.os.Process.myPid().toString()
+        val commands = listOf(
+            listOf("logcat", "-d", "-v", "threadtime", "-t", "2000", "--pid", pid),
+            listOf("logcat", "-d", "-v", "threadtime", "-t", "2000"),
+        )
+
+        commands.forEach { command ->
+            val output = runCatching { runLogcatCommand(command) }.getOrNull()
+            if (!output.isNullOrBlank()) {
+                return output
+            }
+        }
+
+        return "Unable to read logcat output."
+    }
+
+    private fun runLogcatCommand(command: List<String>): String {
+        val process = ProcessBuilder(command)
+            .redirectErrorStream(true)
+            .start()
+        val output = process.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+            reader.readText()
+        }
+        if (!process.waitFor(LogcatReadTimeoutSeconds, TimeUnit.SECONDS)) {
+            process.destroy()
+            return "Logcat command timed out: ${command.joinToString(" ")}"
+        }
+        return output.ifBlank {
+            "Logcat command returned no output: ${command.joinToString(" ")}"
+        }
+    }
+
     private fun buildFullAppExportJson(snapshot: AetherUiState): JSONObject =
         JSONObject().apply {
-            put("schemaVersion", 1)
+            put("schemaVersion", 2)
             put("exportType", "app")
             put("exportedAtMillis", System.currentTimeMillis())
             put("settings", snapshot.settings.toJson())
             put("providerConfigs", JSONArray(serializeProviderConfigs(snapshot.providerConfigs)))
-            put("sessions", JSONArray(serializeChatSessions(snapshot.sessions)))
+            put("sessions", JSONArray(serializeChatSessions(snapshot.sessions.map { it.copy(activeSkills = emptyList()) })))
             put("currentSessionId", snapshot.currentSessionId)
-            put("installedSkills", JSONArray(serializeInstalledSkills(snapshot.installedSkills)))
+            put("skillBundles", skillManager.exportSkillBundles(snapshot.installedSkills))
             put("mcpServers", JSONArray(serializeMcpServerConfigs(snapshot.mcpServers)))
         }
 
-    private fun parseFullAppImport(json: JSONObject): ImportedAppData {
-        val sessions = parseChatSessions(json.optJSONArray("sessions")?.toString().orEmpty())
+    private fun parseFullAppImport(
+        json: JSONObject,
+        installedSkills: List<InstalledSkill>,
+    ): ImportedAppData {
+        val mcpServers = parseMcpServerConfigs(json.optJSONArray("mcpServers")?.toString().orEmpty())
+        val sessions = sanitizeImportedSessions(
+            sessions = parseChatSessions(json.optJSONArray("sessions")?.toString().orEmpty()),
+            installedSkillIds = installedSkills.map { it.id }.toSet(),
+            mcpServerIds = mcpServers.map { it.id }.toSet(),
+        )
         return ImportedAppData(
             settings = parseImportedSettings(json.optJSONObject("settings")),
             providerConfigs = parseProviderConfigs(json.optJSONArray("providerConfigs")?.toString().orEmpty()),
@@ -2720,10 +3109,23 @@ class AetherViewModel(
             currentSessionId = json.optString("currentSessionId")
                 .takeIf { id -> id == DraftSessionId || sessions.any { it.id == id } }
                 ?: DraftSessionId,
-            installedSkills = parseInstalledSkills(json.optJSONArray("installedSkills")?.toString().orEmpty()),
-            mcpServers = parseMcpServerConfigs(json.optJSONArray("mcpServers")?.toString().orEmpty()),
+            installedSkills = installedSkills,
+            mcpServers = mcpServers,
         )
     }
+
+    private fun sanitizeImportedSessions(
+        sessions: List<ChatSession>,
+        installedSkillIds: Set<String>,
+        mcpServerIds: Set<String>,
+    ): List<ChatSession> =
+        sessions.map { session ->
+            session.copy(
+                selectedSkillIds = session.selectedSkillIds.filter(installedSkillIds::contains),
+                activeSkills = emptyList(),
+                activeMcpServerIds = session.activeMcpServerIds.filter(mcpServerIds::contains),
+            )
+        }
 
     private fun AppSettings.toJson(): JSONObject = JSONObject().apply {
         put("provider", provider.storageValue)
@@ -2831,6 +3233,13 @@ class AetherViewModel(
     private fun emitTransientMessage(message: String) {
         _transientMessages.tryEmit(message)
     }
+
+    private fun termuxBackgroundLaunchMessage(): String =
+        if (_uiState.value.settings.language == AppLanguage.SimplifiedChinese) {
+            "Aether 打开 Termux 是为了让它在后台运行。"
+        } else {
+            "Aether opened Termux so it can keep running in the background."
+        }
 
     private fun Throwable.userFacingMessage(): String =
         message?.trim().takeUnless { it.isNullOrBlank() } ?: javaClass.simpleName
