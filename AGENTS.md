@@ -11,3 +11,9 @@
 - Keep signing keys and release credentials outside the repository.
 - Install an updated APK to the connected ADB device after code changes before handing off, unless the user explicitly asks otherwise.
 - Do not perform post-install manual testing unless the user explicitly asks; the user will handle verification on-device.
+
+
+## Notes
+
+- rg is not available on this machine
+- Always exclude build and temporary folders when searching for files.
