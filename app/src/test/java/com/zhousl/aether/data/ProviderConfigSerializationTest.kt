@@ -44,4 +44,32 @@ class ProviderConfigSerializationTest {
 
         assertTrue(options.isEmpty())
     }
+
+    @Test
+    fun providerConfigRoundTripsCustomHeaders() {
+        val serialized = serializeProviderConfigs(
+            listOf(
+                LlmProviderConfig(
+                    providerId = "openrouter",
+                    name = "OpenRouter",
+                    providerType = LlmProvider.OpenAiCompatible,
+                    apiKey = "test-key",
+                    baseUrl = "https://openrouter.ai/api/v1",
+                    modelId = "openai/gpt-test",
+                    customHeaders = listOf(
+                        LlmCustomHeader("HTTP-Referer", "https://example.com"),
+                        LlmCustomHeader("X-Title", "Aether"),
+                    ),
+                )
+            )
+        )
+
+        val config = parseProviderConfigs(serialized).single()
+
+        assertEquals("HTTP-Referer", config.customHeaders[0].name)
+        assertEquals("https://example.com", config.customHeaders[0].value)
+        assertEquals("X-Title", config.customHeaders[1].name)
+        assertEquals("Aether", config.customHeaders[1].value)
+        assertEquals(config.customHeaders, listOf(config).availableModelOptions().single().customHeaders)
+    }
 }

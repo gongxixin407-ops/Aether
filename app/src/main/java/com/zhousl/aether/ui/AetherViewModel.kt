@@ -2639,6 +2639,10 @@ class AetherViewModel(
             providerId = config.providerId.trim(),
             baseUrl = config.baseUrl.trim(),
             modelId = normalizedModelId,
+            customHeaders = config.customHeaders
+                .map { header -> header.copy(name = header.name.trim()) }
+                .filter { header -> header.name.isNotBlank() }
+                .distinctBy { header -> header.name.lowercase() },
             cachedModels = normalizedModels,
             enabledModelIds = normalizedEnabledModels,
         )

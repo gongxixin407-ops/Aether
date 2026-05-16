@@ -99,6 +99,59 @@ class OpenAiCompatibleClientProviderFormatsTest {
     }
 
     @Test
+    fun llmRequestsIncludeAetherUserAgentAndCustomHeaders() = runBlocking {
+        val server = MockWebServer()
+        server.enqueue(
+            MockResponse()
+                .addHeader("Content-Type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "choices": [
+                        {
+                          "message": {
+                            "role": "assistant",
+                            "content": "Done."
+                          }
+                        }
+                      ]
+                    }
+                    """.trimIndent()
+                )
+        )
+        server.start()
+
+        try {
+            val settings = AppSettings(
+                provider = LlmProvider.OpenAiCompatible,
+                apiKey = "test-key",
+                baseUrl = server.url("/v1").toString(),
+                modelId = "gpt-test",
+                customHeaders = listOf(
+                    LlmCustomHeader("X-Aether-Test", "enabled"),
+                ),
+            )
+
+            client.createChatCompletion(
+                settings = settings,
+                systemPrompt = "",
+                conversation = listOf(
+                    JSONObject().apply {
+                        put("role", "user")
+                        put("content", "Hello")
+                    }
+                ),
+            ).getOrThrow()
+
+            val request = server.takeRequest()
+            assertEquals(AetherLlmUserAgent, request.getHeader("User-Agent"))
+            assertEquals("enabled", request.getHeader("X-Aether-Test"))
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
     fun disableReasoningAddsDeepSeekThinkingDisabledParameter() = runBlocking {
         val server = MockWebServer()
         server.enqueue(

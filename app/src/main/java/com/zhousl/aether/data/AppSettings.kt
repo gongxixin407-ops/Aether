@@ -122,6 +122,7 @@ data class AppSettings(
     val apiKey: String = "",
     val baseUrl: String = LlmProvider.OpenAiCompatible.defaultBaseUrl,
     val modelId: String = LlmProvider.OpenAiCompatible.defaultModelId,
+    val customHeaders: List<LlmCustomHeader> = emptyList(),
     val systemPrompt: String = "You are Aether, a local-first Android agent that can call tools and complete tasks on-device. Use available tools instead of guessing local state.",
     val tavilyApiKey: String = "",
     val tavilyBaseUrl: String = DefaultTavilyBaseUrl,
@@ -144,6 +145,11 @@ data class AppSettings(
     val onboardingCompletedVersion: Int = 0,
     val privacyPolicyAccepted: Boolean = false,
     val lastUpdateCheckAtMillis: Long = 0L,
+)
+
+data class LlmCustomHeader(
+    val name: String,
+    val value: String,
 )
 
 const val CurrentOnboardingVersion = 1
@@ -281,6 +287,7 @@ data class LlmProviderConfig(
     val apiKey: String,
     val baseUrl: String,
     val modelId: String,
+    val customHeaders: List<LlmCustomHeader> = emptyList(),
     val cachedModels: List<String> = listOf(modelId),
     val enabledModelIds: List<String> = cachedModels,
     val isEnabled: Boolean = true,
@@ -297,6 +304,7 @@ internal fun LlmProviderConfig.toJson(): JSONObject = JSONObject().apply {
     put("apiKey", apiKey)
     put("baseUrl", baseUrl)
     put("modelId", modelId)
+    put("customHeaders", customHeaders.toJsonArray())
     put("cachedModels", JSONArray().apply { cachedModels.forEach(::put) })
     put("enabledModelIds", JSONArray().apply { enabledModelIds.forEach(::put) })
     put("isEnabled", isEnabled)
@@ -339,6 +347,7 @@ internal fun parseProviderConfigs(rawValue: String): List<LlmProviderConfig> {
                         apiKey = json.optString("apiKey"),
                         baseUrl = baseUrl,
                         modelId = modelId,
+                        customHeaders = parseCustomHeaders(json.optJSONArray("customHeaders")),
                         cachedModels = cachedModels,
                         enabledModelIds = if (json.has("enabledModelIds")) {
                             normalizeStringList(enabledModelIds.filter(cachedModels::contains))
@@ -365,6 +374,34 @@ internal fun parseProviderConfigs(rawValue: String): List<LlmProviderConfig> {
 
 internal fun serializeProviderConfigs(configs: List<LlmProviderConfig>): String =
     JSONArray().apply { configs.forEach { put(it.toJson()) } }.toString()
+
+internal fun List<LlmCustomHeader>.toJsonArray(): JSONArray = JSONArray().apply {
+    forEach { header ->
+        put(
+            JSONObject().apply {
+                put("name", header.name)
+                put("value", header.value)
+            }
+        )
+    }
+}
+
+internal fun parseCustomHeaders(array: JSONArray?): List<LlmCustomHeader> {
+    if (array == null) return emptyList()
+    return buildList {
+        for (index in 0 until array.length()) {
+            val json = array.optJSONObject(index) ?: continue
+            val name = json.optString("name").trim()
+            if (name.isBlank()) continue
+            add(
+                LlmCustomHeader(
+                    name = name,
+                    value = json.optString("value"),
+                )
+            )
+        }
+    }.distinctBy { it.name.lowercase(Locale.US) }
+}
 
 private fun JSONArray?.toStringListSafe(): List<String> {
     if (this == null) return emptyList()
@@ -415,6 +452,7 @@ data class ProviderModelOption(
     val apiKey: String,
     val baseUrl: String,
     val modelId: String,
+    val customHeaders: List<LlmCustomHeader>,
     val basicFunctionCallingCompatibilityMode: Boolean,
     val fullLabel: String,
     val chatLabel: String,
@@ -456,6 +494,7 @@ fun List<LlmProviderConfig>.availableModelOptions(
                 apiKey = config.apiKey,
                 baseUrl = config.baseUrl.trim(),
                 modelId = normalizedModelId,
+                customHeaders = config.customHeaders,
                 basicFunctionCallingCompatibilityMode = config.basicFunctionCallingCompatibilityMode,
                 fullLabel = fullLabel,
                 chatLabel = if ((modelCounts[normalizedModelId] ?: 0) > 1) fullLabel else normalizedModelId,
@@ -469,6 +508,7 @@ fun AppSettings.withModelOption(option: ProviderModelOption): AppSettings = copy
     apiKey = option.apiKey.trim(),
     baseUrl = option.baseUrl.trim(),
     modelId = option.modelId.trim(),
+    customHeaders = option.customHeaders,
     basicFunctionCallingCompatibilityMode = option.basicFunctionCallingCompatibilityMode,
 )
 

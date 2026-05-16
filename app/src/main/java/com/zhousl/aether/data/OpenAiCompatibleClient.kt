@@ -838,6 +838,7 @@ class OpenAiCompatibleClient(
                     addHeader("Authorization", "Bearer $trimmedApiKey")
                 }
             }
+            .applyAetherLlmHeaders(settings.customHeaders)
             .post(payload.toString().toRequestBody(JsonMediaType))
             .build()
     }
@@ -912,6 +913,7 @@ class OpenAiCompatibleClient(
                     addHeader("Authorization", "Bearer $trimmedApiKey")
                 }
             }
+            .applyAetherLlmHeaders(settings.customHeaders)
             .post(payload.toString().toRequestBody(JsonMediaType))
             .build()
     }
@@ -967,6 +969,7 @@ class OpenAiCompatibleClient(
             .addHeader("Accept", if (stream) "text/event-stream" else "application/json")
             .addHeader("x-api-key", trimmedApiKey)
             .addHeader("anthropic-version", AnthropicVersion)
+            .applyAetherLlmHeaders(settings.customHeaders)
             .post(payload.toString().toRequestBody(JsonMediaType))
             .build()
     }
@@ -1054,6 +1057,7 @@ class OpenAiCompatibleClient(
                     addHeader("Accept", "text/event-stream")
                 }
             }
+            .applyAetherLlmHeaders(settings.customHeaders)
             .post(payload.toString().toRequestBody(JsonMediaType))
             .build()
     }
