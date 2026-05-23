@@ -64,7 +64,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -297,7 +296,6 @@ internal fun ChatGptDropdownField(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { expanded = true }
             .padding(horizontal = 16.dp, vertical = 14.dp),
     ) {
         Text(
@@ -307,7 +305,11 @@ internal fun ChatGptDropdownField(
         )
         Spacer(Modifier.height(4.dp))
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .clickable { expanded = true }
+                .padding(vertical = 2.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -327,21 +329,18 @@ internal fun ChatGptDropdownField(
             onDismissRequest = { expanded = false },
             modifier = Modifier.background(AetherSurface),
         ) {
-            options.forEach { option ->
-                DropdownMenuItem(
-                    text = {
-                        Text(option.displayName, color = AetherOnSurface)
-                    },
-                    trailingIcon = if (option == LlmProvider.fromStorage(option.storageValue) &&
-                        option.displayName == selectedValue
+            Column(Modifier.background(AetherSurface)) {
+                options.forEach { option ->
+                    AetherDropdownMenuItem(
+                        selected = option.displayName == selectedValue,
+                        onClick = {
+                            expanded = false
+                            onSelected(option)
+                        },
                     ) {
-                        { Icon(Icons.Rounded.Check, contentDescription = null, tint = AetherPrimary) }
-                    } else null,
-                    onClick = {
-                        expanded = false
-                        onSelected(option)
-                    },
-                )
+                        Text(option.displayName, color = AetherOnSurface)
+                    }
+                }
             }
         }
     }
@@ -361,7 +360,6 @@ internal fun SelectionDropdownField(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { expanded = true }
             .padding(horizontal = 16.dp, vertical = 14.dp),
     ) {
         Text(
@@ -381,6 +379,7 @@ internal fun SelectionDropdownField(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(16.dp))
                 .background(AetherBackground)
+                .clickable { expanded = true }
                 .padding(horizontal = 14.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
@@ -401,9 +400,15 @@ internal fun SelectionDropdownField(
             onDismissRequest = { expanded = false },
             modifier = Modifier.background(AetherSurface),
         ) {
-            options.forEach { option ->
-                DropdownMenuItem(
-                    text = {
+            Column(Modifier.background(AetherSurface)) {
+                options.forEach { option ->
+                    AetherDropdownMenuItem(
+                        selected = option.selected,
+                        onClick = {
+                            expanded = false
+                            option.onClick()
+                        },
+                    ) {
                         Column {
                             Text(option.title, color = AetherOnSurface)
                             Text(
@@ -412,18 +417,34 @@ internal fun SelectionDropdownField(
                                 color = AetherOnSurfaceVariant,
                             )
                         }
-                    },
-                    trailingIcon = if (option.selected) {
-                        { Icon(Icons.Rounded.Check, contentDescription = null, tint = AetherPrimary) }
-                    } else {
-                        null
-                    },
-                    onClick = {
-                        expanded = false
-                        option.onClick()
-                    },
-                )
+                    }
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun AetherDropdownMenuItem(
+    selected: Boolean,
+    onClick: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(AetherSurface)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(modifier = Modifier.weight(1f)) {
+            content()
+        }
+        if (selected) {
+            Spacer(Modifier.width(12.dp))
+            Icon(Icons.Rounded.Check, contentDescription = null, tint = AetherPrimary)
         }
     }
 }
