@@ -74,7 +74,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
@@ -4035,20 +4034,22 @@ private fun RuntimeCleanupDeveloperSettingsSection(
             AnimatedVisibility(visible = autoCleanOldCommandHistory) {
                 Column {
                     Spacer(Modifier.height(12.dp))
-                    OutlinedTextField(
+                    ChatGptTextField(
                         value = oldCommandHistoryRetentionHours,
                         onValueChange = { value ->
                             onOldCommandHistoryRetentionHoursChanged(
                                 value.copy(text = value.text.filter(Char::isDigit)),
                             )
                         },
-                        label = { Text(stringResource(R.string.settings_old_command_history_retention_hours_value)) },
-                        supportingText = {
-                            Text(stringResource(R.string.settings_old_command_history_retention_hours_value_description))
-                        },
-                        singleLine = true,
+                        label = stringResource(R.string.settings_old_command_history_retention_hours_value),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = stringResource(R.string.settings_old_command_history_retention_hours_value_description),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = AetherOnSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp),
                     )
                 }
             }

@@ -2687,11 +2687,20 @@ class AetherViewModel(
         }
     }
 
-    private fun ChatSession.workspaceFilePathsForCleanup(): List<String> = messages
-        .flatMap { message -> message.attachments }
-        .map { attachment -> attachment.workspacePath.trim() }
-        .filter(String::isNotEmpty)
-        .distinct()
+    private fun ChatSession.workspaceFilePathsForCleanup(): List<String> =
+        messages.collectWorkspaceFilePathsForCleanup().distinct()
+
+    private fun List<ChatMessage>.collectWorkspaceFilePathsForCleanup(): List<String> =
+        flatMap { message -> message.collectWorkspaceFilePathsForCleanup() }
+
+    private fun ChatMessage.collectWorkspaceFilePathsForCleanup(): List<String> =
+        attachments
+            .map { attachment -> attachment.workspacePath.trim() }
+            .filter(String::isNotEmpty) +
+            branchGroup
+                ?.branches
+                .orEmpty()
+                .flatMap { branch -> branch.collectWorkspaceFilePathsForCleanup() }
 
     private fun persistDeleteSession(
         sessionId: String,
