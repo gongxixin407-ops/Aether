@@ -221,7 +221,7 @@ class ChatRepository(
         val preferences = context.chatDataStore.data.first()
         val legacySessionsJson = preferences[SESSIONS_JSON].orEmpty()
         val legacyMigrationComplete = preferences[ROOM_MIGRATION_COMPLETE] == true
-        val legacyCurrentSessionId = preferences[CURRENT_SESSION_ID] ?: DraftSessionId
+        val legacyCurrentSessionId = preferences[CURRENT_SESSION_ID]
         val roomMeta = chatHistoryDao.getMeta()
 
         if (roomMeta?.roomMigrationComplete == true) {
@@ -239,7 +239,7 @@ class ChatRepository(
             database.withTransaction {
                 chatHistoryDao.upsertMeta(
                     ChatStateMetaEntity(
-                        currentSessionId = legacyCurrentSessionId,
+                        currentSessionId = legacyCurrentSessionId ?: DraftSessionId,
                         roomMigrationComplete = true,
                     )
                 )
@@ -257,7 +257,7 @@ class ChatRepository(
             database.withTransaction {
                 chatHistoryDao.upsertMeta(
                     ChatStateMetaEntity(
-                        currentSessionId = legacyCurrentSessionId,
+                        currentSessionId = legacyCurrentSessionId ?: DraftSessionId,
                         roomMigrationComplete = true,
                     )
                 )
@@ -309,7 +309,7 @@ class ChatRepository(
         database.withTransaction {
             chatHistoryDao.upsertMeta(
                 ChatStateMetaEntity(
-                    currentSessionId = legacyCurrentSessionId,
+                    currentSessionId = legacyCurrentSessionId ?: DraftSessionId,
                     roomMigrationComplete = true,
                 )
             )
@@ -331,13 +331,13 @@ class ChatRepository(
 }
 
 internal fun resolveLegacyCurrentSessionIdForMigration(
-    legacyCurrentSessionId: String,
+    legacyCurrentSessionId: String?,
     legacySessions: List<ChatSession>,
 ): String {
-    if (legacySessions.isEmpty()) return DraftSessionId
+    if (legacySessions.isEmpty()) return legacyCurrentSessionId ?: DraftSessionId
     val firstSessionId = legacySessions.first().id
     return legacyCurrentSessionId
-        .takeIf { id -> id == DraftSessionId || legacySessions.any { it.id == id } }
+        ?.takeIf { id -> id == DraftSessionId || legacySessions.any { it.id == id } }
         ?: firstSessionId.takeIf { it.isNotBlank() }
         ?: DraftSessionId
 }
